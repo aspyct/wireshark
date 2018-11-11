@@ -1717,6 +1717,7 @@ set(DISSECTOR_SRC
 	${CMAKE_CURRENT_SOURCE_DIR}/packet-swipe.c
 	${CMAKE_CURRENT_SOURCE_DIR}/packet-symantec.c
 	${CMAKE_CURRENT_SOURCE_DIR}/packet-sync.c
+	${CMAKE_CURRENT_SOURCE_DIR}/packet-syncthing.c
 	${CMAKE_CURRENT_SOURCE_DIR}/packet-synergy.c
 	${CMAKE_CURRENT_SOURCE_DIR}/packet-synphasor.c
 	${CMAKE_CURRENT_SOURCE_DIR}/packet-sysdig-event.c
