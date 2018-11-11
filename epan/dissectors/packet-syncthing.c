@@ -33,8 +33,10 @@ static gint dissect_instance_id(tvbuff_t *tvb, proto_tree *tree, guint offset, s
 
 static int proto_syncthing_local_discovery = -1;
 
-static int hf_syncthing_magic_number_type = -1;
-static int hf_syncthing_instance_id_type = -1;
+static int hf_syncthing_local_magic = -1;
+static int hf_syncthing_local_machine_id = -1;
+static int hf_syncthing_local_address = -1;
+static int hf_syncthing_local_instance_id = -1;
 
 static gint ett_syncthing_local = -1;
 
@@ -55,7 +57,7 @@ dissect_syncthing_local_discovery(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
 
             proto_item *ti = proto_tree_add_item(tree, proto_syncthing_local_discovery, tvb, 0,-1, ENC_NA);
             proto_tree *syncthing_tree = proto_item_add_subtree(ti, ett_syncthing_local);
-            proto_tree_add_item(syncthing_tree, hf_syncthing_magic_number_type, tvb, 0, 4, ENC_BIG_ENDIAN);
+            proto_tree_add_item(syncthing_tree, hf_syncthing_local_magic, tvb, 0, 4, ENC_BIG_ENDIAN);
 
             guint offset = 4;
             syncthing_local_discovery_summary summary = { 0, 0, 0 };
@@ -162,8 +164,12 @@ dissect_machine_id(tvbuff_t *tvb, proto_tree *tree _U_, guint offset, syncthing_
 
     varint_length = tvb_get_varint(tvb, offset, 4, &field_length, ENC_VARINT_PROTOBUF);
     if (varint_length != 0) {
-        // TODO: Add the field
+        offset += varint_length;
         summary->machine_id_count += 1;
+
+        const guint8 *buf = tvb_get_ptr(tvb, offset, field_length);
+        proto_tree_add_bytes(tree, hf_syncthing_local_machine_id, tvb, offset, field_length, buf);
+
         return varint_length + field_length;
     }
     else {
@@ -172,7 +178,7 @@ dissect_machine_id(tvbuff_t *tvb, proto_tree *tree _U_, guint offset, syncthing_
 }
 
 gint
-dissect_address(tvbuff_t *tvb, proto_tree *tree _U_, guint offset, syncthing_local_discovery_summary *summary)
+dissect_address(tvbuff_t *tvb, proto_tree *tree, guint offset, syncthing_local_discovery_summary *summary)
 {
     g_print("Dissecting address\n");
 
@@ -181,8 +187,13 @@ dissect_address(tvbuff_t *tvb, proto_tree *tree _U_, guint offset, syncthing_loc
 
     varint_length = tvb_get_varint(tvb, offset, 4, &field_length, ENC_VARINT_PROTOBUF);
     if (varint_length != 0) {
-        // TODO: Add the field
+        offset += varint_length;
         summary->addresses_count += 1;
+
+        guint8 *buf = (guint8*) wmem_alloc(wmem_packet_scope(), field_length + 1);
+        tvb_get_nstringz0(tvb, offset, field_length + 1, buf);
+        proto_tree_add_string(tree, hf_syncthing_local_address, tvb, offset, field_length, buf);
+
         return varint_length + field_length;
     }
     else {
@@ -203,7 +214,7 @@ dissect_instance_id(tvbuff_t *tvb, proto_tree *tree, guint offset, syncthing_loc
     if (varint_length != 0)
     {
         summary->instance_id_count += 1;
-        proto_tree_add_int64(tree, hf_syncthing_instance_id_type, tvb, offset, varint_length, instance_id);
+        proto_tree_add_int64(tree, hf_syncthing_local_instance_id, tvb, offset, varint_length, instance_id);
 
         return varint_length;
     }
@@ -217,14 +228,26 @@ void
 proto_register_syncthing(void)
 {
     static hf_register_info hf[] = {
-        { &hf_syncthing_magic_number_type,
-            { "Magic identifier number", "syncthing_local.type",
+        { &hf_syncthing_local_magic,
+            { "Magic (constant)", "syncthing.local.magic",
             FT_UINT32, BASE_HEX,
             NULL, 0x0,
             NULL, HFILL }
         },
-        { &hf_syncthing_instance_id_type,
-            { "Instance ID", "syncthing_instance_id.type",
+        { &hf_syncthing_local_machine_id,
+            { "ID", "syncthing.local.id",
+            FT_BYTES, BASE_NONE,
+            NULL, 0x0,
+            NULL, HFILL}
+        },
+        { &hf_syncthing_local_address,
+            { "Sync Service Address", "syncthing.local.address",
+            FT_STRING, BASE_NONE,
+            NULL, 0x0,
+            NULL, HFILL }
+        },
+        { &hf_syncthing_local_instance_id,
+            { "Instance ID", "syncthing.local.instance_id",
             FT_INT64, BASE_DEC,
             NULL, 0x0,
             NULL, HFILL }    
@@ -238,7 +261,7 @@ proto_register_syncthing(void)
     proto_syncthing_local_discovery = proto_register_protocol(
         "Syncthing Local Discovery Protocol v4",
         "Syncthing",
-        "syncthing_local"
+        "syncthing.local"
     );
 
     proto_register_field_array(proto_syncthing_local_discovery, hf, array_length(hf));
