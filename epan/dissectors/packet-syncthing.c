@@ -29,13 +29,27 @@ typedef struct {
 } syncthing_local_discovery_summary;
 // We all live in a yellow summary!
 
+typedef gint (*syncthing_protobuf_field_handler)(syncthing_local_discovery_summary *summary, guint offset);
+
+typedef struct {
+    int tag;
+    int wire_type;
+    syncthing_protobuf_field_handler handler;
+} syncthing_protobuf_field_definition;
+
 
 /* Internal functions */
 // TODO: start_offset and offset are poorly namedTODO
 static gint dissect_next_field(syncthing_local_discovery_summary *summary, guint offset);
-static gint dissect_machine_id(syncthing_local_discovery_summary *summary, guint start_offset, guint offset);
-static gint dissect_address(syncthing_local_discovery_summary *summary, guint start_offset, guint offset);
-static gint dissect_instance_id(syncthing_local_discovery_summary *summary, guint start_offset, guint offset);
+static gint dissect_protobuf_field(
+    syncthing_protobuf_field_definition *definitions,
+    int defcount,
+    syncthing_local_discovery_summary *summary,
+    guint offset
+);
+static gint dissect_machine_id(syncthing_local_discovery_summary *summary, guint offset);
+static gint dissect_address(syncthing_local_discovery_summary *summary, guint offset);
+static gint dissect_instance_id(syncthing_local_discovery_summary *summary, guint offset);
 
 /* Protocols */
 void proto_register_syncthing(void);
@@ -43,6 +57,7 @@ void proto_register_syncthing(void);
 static int proto_syncthing_local_discovery = -1;
 
 /* Fields */
+static int hf_syncthing_protobuf_key = -1;
 static int hf_syncthing_local_magic = -1;
 static int hf_syncthing_local_machine_id = -1;
 static int hf_syncthing_local_address = -1;
@@ -102,75 +117,61 @@ dissect_syncthing_local_discovery(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
 }
 
 static gint
-dissect_next_field(syncthing_local_discovery_summary *summary, guint start_offset)
+dissect_next_field(syncthing_local_discovery_summary *summary, guint offset)
 {
     g_print("Dissecting next field\n");
 
+    /*
+    * The format is defined as follows:
+    * message Announce {
+    *   bytes           id          = 1;
+    *   repeated string addresses   = 2;
+    *   int64           instance_id = 3;
+    * }
+    */
+
+    static syncthing_protobuf_field_definition field_definitions[] = {
+        { 1, 2, &dissect_machine_id },
+        { 2, 2, &dissect_address },
+        { 3, 0, &dissect_instance_id }
+    };
+
+    return dissect_protobuf_field(field_definitions, sizeof(field_definitions), summary, offset);
+}
+
+static gint
+dissect_protobuf_field(
+    syncthing_protobuf_field_definition *definitions,
+    int defcount,
+    syncthing_local_discovery_summary *summary,
+    guint offset)
+{
     gint varint_length;
     guint64 key;
 	
-    guint offset = start_offset;
     varint_length = tvb_get_varint(summary->tvb, offset, 4, &key, ENC_VARINT_PROTOBUF);
     if (varint_length != 0) {
         offset += varint_length;
 
+        const int tag = key >> 3;
         int wire_type = key & 0x07;
-        int tag = key >> 3;
 
         g_print("wire_type: %i\n", wire_type);
         g_print("tag: %i\n", tag);
 
-        /*
-        * The format is defined as follows:
-        * message Announce {
-        *   bytes           id          = 1;
-        *   repeated string addresses   = 2;
-        *   int64           instance_id = 3;
-        * }
-        */
+        for (int i = 0; i < defcount; ++i) {
+            syncthing_protobuf_field_definition *def = &definitions[i];
 
-       // TODO: Replace this switch with an array
-        gint result;
-        switch (tag)
-        {
-            case 1:
-                if (wire_type != 2) {
-                    // Not a length-delimited field.
-                    // TOOD: Add expert info
-                    return -1;
+            if (tag == def->tag) {
+                if (wire_type == def->wire_type) {
+                    gint result = def->handler(summary, offset);
+                    return varint_length + result;
                 }
-
-                result = dissect_machine_id(summary, start_offset, offset);
-                break;
-            case 2:
-                if (wire_type != 2) {
-                    // Not a length-delimited field.
+                else {
                     // TODO: Add expert info
                     return -1;
                 }
-
-                result = dissect_address(summary, start_offset, offset);
-                break;
-            case 3:
-                if (wire_type != 0) {
-                    // Not a varint.
-                    // TODO: Add expert info
-                    return -1;
-                }
-                result = dissect_instance_id(summary, start_offset, offset);
-                break;
-            default:
-                result = -1;
-                break;
-        }
-
-        // TODO: Add expert info
-        g_print("result = %i\n", result);
-        if (result != -1) {
-            return (offset + result) - start_offset;
-        }
-        else {
-            return -1;
+            }
         }
     }
 
@@ -180,7 +181,7 @@ dissect_next_field(syncthing_local_discovery_summary *summary, guint start_offse
 }
 
 gint
-dissect_machine_id(syncthing_local_discovery_summary *summary, guint start_offset _U_, guint offset)
+dissect_machine_id(syncthing_local_discovery_summary *summary, guint offset)
 {
     g_print("Dissecting machine id\n");
     
@@ -193,6 +194,13 @@ dissect_machine_id(syncthing_local_discovery_summary *summary, guint start_offse
         summary->machine_id_count += 1;
 
         const guint8 *buf = tvb_get_ptr(summary->tvb, offset, field_length);
+
+        //proto_item *ti_field;
+
+        // TODO: Format ID
+        // TODO: Format this code
+        //proto_tree *machine_id_tree = proto_tree_add_subtree_format(summary->tree, summary->tvb, start_offset, (offset - start_offset) + field_length, ett_syncthing_local_instance_id, &ti_field, "Machine ID: %s", "formatted ID");
+        //proto_tree_add_item_ret_varint(machine_id_tree, hf_syncthing_protobuf_key, summary->tvb, start_offset, offset - start_offset, ENC_VARINT_PROTOBUF, NULL, NULL);
         proto_tree_add_bytes(summary->tree, hf_syncthing_local_machine_id, summary->tvb, offset, field_length, buf);
 
         return varint_length + field_length;
@@ -204,7 +212,7 @@ dissect_machine_id(syncthing_local_discovery_summary *summary, guint start_offse
 }
 
 gint
-dissect_address(syncthing_local_discovery_summary *summary, guint start_offset _U_, guint offset)
+dissect_address(syncthing_local_discovery_summary *summary, guint offset)
 {
     g_print("Dissecting address\n");
 
@@ -216,6 +224,7 @@ dissect_address(syncthing_local_discovery_summary *summary, guint start_offset _
         offset += varint_length;
         summary->addresses_count += 1;
 
+        // TODO: I should free this at some point
         guint8 *buf = (guint8*) wmem_alloc(wmem_packet_scope(), field_length + 1);
         tvb_get_nstringz0(summary->tvb, offset, field_length + 1, buf);
         proto_tree_add_string(summary->tree, hf_syncthing_local_address, summary->tvb, offset, field_length, buf);
@@ -229,7 +238,7 @@ dissect_address(syncthing_local_discovery_summary *summary, guint start_offset _
 }
 
 gint
-dissect_instance_id(syncthing_local_discovery_summary *summary, guint start_offset _U_, guint offset)
+dissect_instance_id(syncthing_local_discovery_summary *summary, guint offset)
 {
     g_print("Dissecting instance_id\n");
 
@@ -256,6 +265,12 @@ void
 proto_register_syncthing(void)
 {
     static hf_register_info hf[] = {
+        { &hf_syncthing_protobuf_key,
+            { "Protobuf key", "syncthing.protobuf.key",
+            FT_BYTES, BASE_NONE,
+            NULL, 0x0,
+            NULL, HFILL }
+        },
         { &hf_syncthing_local_magic,
             { "Magic (constant)", "syncthing.local.magic",
             FT_UINT32, BASE_HEX,
