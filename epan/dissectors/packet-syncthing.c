@@ -1,4 +1,4 @@
-/* packet-protobuf.c
+/* packet-syncthing.c
  * Routines for Syncthing Local Discovery Protocol v4
  * Copyright 2018, Antoine d'Otreppe <a.dotreppe@aspyct.org>
  *
@@ -72,7 +72,7 @@ static gint ett_syncthing_protobuf_key = -1;
 // TODO: static expert_field ei_syncthing_local_malformed = EI_INIT;
 
 
-gint
+static gint
 dissect_node_id(syncthing_local_discovery_summary *summary, proto_item *header, guint offset)
 {
     guint varint_length;
@@ -99,7 +99,7 @@ dissect_node_id(syncthing_local_discovery_summary *summary, proto_item *header, 
     }
 }
 
-gint
+static gint
 dissect_address(syncthing_local_discovery_summary *summary, proto_item *header, const guint start_offset)
 {
     guint varint_length;
@@ -140,7 +140,7 @@ dissect_address(syncthing_local_discovery_summary *summary, proto_item *header, 
     }
 }
 
-gint
+static gint
 dissect_instance_id(syncthing_local_discovery_summary *summary, proto_item *header, guint offset)
 {
     gint varint_length;
@@ -394,7 +394,7 @@ proto_reg_handoff_syncthing(void)
 }
 
 /*
- * Editor modelines  -  http://www.wireshark.org/tools/modelines.html
+ * Editor modelines  -  https://www.wireshark.org/tools/modelines.html
  *
  * Local variables:
  * c-basic-offset: 4
