@@ -153,7 +153,7 @@ dissect_instance_id(syncthing_local_discovery_summary *summary, proto_item *head
         // TODO: How should I display this instance ID?
         // Check with the guys from syncthing
         proto_tree_add_int64(summary->tree, hf_syncthing_local_instance_id, summary->tvb, offset, varint_length, instance_id);
-        proto_item_set_text(header, "Instance ID: %li", instance_id);
+        proto_item_set_text(header, "Instance ID: %" G_GINT64_MODIFIER "i", instance_id);
         return varint_length;
     }
     else {
@@ -210,7 +210,7 @@ dissect_protobuf_field(
                         start_offset,
                         varint_length,
                         key,
-                        "Protobuf Key, ID: %li, Wire type: %i",
+                        "Protobuf Key, ID: %" G_GINT64_MODIFIER "i, Wire type: %i",
                         tag, wire_type
                     );
                     proto_item *key_tree = proto_item_add_subtree(key_item, ett_syncthing_protobuf_key);
