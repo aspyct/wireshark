@@ -238,7 +238,7 @@ dissect_next_field(syncthing_local_discovery_summary *summary, guint offset)
 
     // TODO: This should be initialized only once, maybe in the proto_register_syncthing?
     syncthing_protobuf_field_definition field_definitions[] = {
-        /* { tag, wire_type, handler, ett, label } */
+        /* { tag, wire_type, handler, ett } */
         { 1, 2, &dissect_node_id, ett_syncthing_local_node_id },
         { 2, 2, &dissect_address, ett_syncthing_local_address },
         { 3, 0, &dissect_instance_id, ett_syncthing_local_instance_id }
