@@ -32,7 +32,6 @@ typedef const struct {
     int wire_type;
     syncthing_protobuf_field_handler handler;
     int ett;
-    char *label;
 } syncthing_protobuf_field_definition;
 
 
@@ -45,6 +44,7 @@ static int proto_syncthing_local_discovery = -1;
 /* Fields */
 static int hf_syncthing_protobuf_entry = -1;
 static int hf_syncthing_protobuf_key = -1;
+static int hf_syncthing_protobuf_field_length = -1;
 static int hf_syncthing_local_magic = -1;
 static int hf_syncthing_local_machine_id = -1;
 static int hf_syncthing_local_address = -1;
@@ -74,13 +74,9 @@ dissect_machine_id(syncthing_local_discovery_summary *summary, proto_item *heade
 
         const guint8 *buf = tvb_get_ptr(summary->tvb, offset, field_length);
 
-        //proto_item *ti_field;
-
         // TODO: Format ID
-        // TODO: Format this code
-        //proto_tree *machine_id_tree = proto_tree_add_subtree_format(summary->tree, summary->tvb, start_offset, (offset - start_offset) + field_length, ett_syncthing_local_instance_id, &ti_field, "Machine ID: %s", "formatted ID");
-        //proto_tree_add_item_ret_varint(machine_id_tree, hf_syncthing_protobuf_key, summary->tvb, start_offset, offset - start_offset, ENC_VARINT_PROTOBUF, NULL, NULL);
         proto_tree_add_bytes(summary->tree, hf_syncthing_local_machine_id, summary->tvb, offset, field_length, buf);
+        proto_item_set_text(header, "Machine ID: <TODO>");
 
         return varint_length + field_length;
     }
@@ -91,19 +87,34 @@ dissect_machine_id(syncthing_local_discovery_summary *summary, proto_item *heade
 }
 
 gint
-dissect_address(syncthing_local_discovery_summary *summary, proto_item *header _U_, guint offset)
+dissect_address(syncthing_local_discovery_summary *summary, proto_item *header _U_, const guint start_offset)
 {
     guint varint_length;
     guint64 field_length;
+    guint offset = start_offset;
 
     varint_length = tvb_get_varint(summary->tvb, offset, 4, &field_length, ENC_VARINT_PROTOBUF);
     if (varint_length != 0) {
         offset += varint_length;
 
-        // TODO: I should free this at some point
+        proto_tree_add_uint64(
+            summary->tree,
+            hf_syncthing_protobuf_field_length,
+            summary->tvb,
+            start_offset,
+            varint_length,
+            field_length
+        );
+
         guint8 *buf = (guint8*) wmem_alloc(wmem_packet_scope(), field_length + 1);
         tvb_get_nstringz0(summary->tvb, offset, field_length + 1, buf);
         proto_tree_add_string(summary->tree, hf_syncthing_local_address, summary->tvb, offset, field_length, buf);
+
+        // TODO: Can I reuse the labels I put in the hf fields?
+        proto_item_set_text(header, "Sync address: %s", buf);
+
+        // TODO: Is it correct to free this here?
+        wmem_free(wmem_packet_scope(), buf);
 
         return varint_length + field_length;
     }
@@ -123,8 +134,10 @@ dissect_instance_id(syncthing_local_discovery_summary *summary, proto_item *head
     varint_length = tvb_get_varint(summary->tvb, offset, 10, &instance_id, ENC_VARINT_PROTOBUF);
     if (varint_length != 0)
     {
+        // TODO: How should I display this instance ID?
+        // Check with the guys from syncthing
         proto_tree_add_int64(summary->tree, hf_syncthing_local_instance_id, summary->tvb, offset, varint_length, instance_id);
-
+        proto_item_set_text(header, "Instance ID: %li", instance_id);
         return varint_length;
     }
     else {
@@ -164,10 +177,14 @@ dissect_protobuf_field(
                         hf_syncthing_protobuf_entry,
                         summary->tvb,
                         start_offset,
-                        0, // don't know yet
+                        0, // don't know yet,
                         ENC_NA
                     );
                     proto_tree *subtree = proto_item_add_subtree(header, def->ett);
+
+                    // TODO: This should probably be a bit field or something?
+                    // Or a subtree itself
+                    proto_tree_add_uint64(subtree, hf_syncthing_protobuf_key, summary->tvb, start_offset, varint_length, key);
 
                     syncthing_local_discovery_summary subsummary = { summary->tvb, summary->pinfo, subtree };
                     gint result = def->handler(&subsummary, header, offset);
@@ -202,9 +219,9 @@ dissect_next_field(syncthing_local_discovery_summary *summary, guint offset)
     // TODO: This should be initialized only once, maybe in the proto_register_syncthing?
     syncthing_protobuf_field_definition field_definitions[] = {
         /* { tag, wire_type, handler, ett, label } */
-        { 1, 2, &dissect_machine_id, ett_syncthing_local_machine_id, "Machine ID" },
-        { 2, 2, &dissect_address, ett_syncthing_local_address, "Sync Service Address" },
-        { 3, 0, &dissect_instance_id, ett_syncthing_local_instance_id, "Instance ID" }
+        { 1, 2, &dissect_machine_id, ett_syncthing_local_machine_id },
+        { 2, 2, &dissect_address, ett_syncthing_local_address },
+        { 3, 0, &dissect_instance_id, ett_syncthing_local_instance_id }
     };
 
     return dissect_protobuf_field(summary, offset, field_definitions, sizeof(field_definitions));
@@ -255,13 +272,19 @@ proto_register_syncthing(void)
     static hf_register_info hf[] = {
         { &hf_syncthing_protobuf_entry,
             { "Protobuf entry", "syncthing.protobuf.entry",
-            FT_BYTES, BASE_NONE,
+            FT_STRINGZ, BASE_NONE,
             NULL, 0x0,
             NULL, HFILL }
         },
         { &hf_syncthing_protobuf_key,
             { "Protobuf key", "syncthing.protobuf.key",
-            FT_BYTES, BASE_NONE,
+            FT_UINT64, BASE_HEX,
+            NULL, 0x0,
+            NULL, HFILL }
+        },
+        { &hf_syncthing_protobuf_field_length,
+            { "Protobuf field length", "syncthing.protobuf.length",
+            FT_UINT64, BASE_DEC,
             NULL, 0x0,
             NULL, HFILL }
         },
@@ -278,7 +301,7 @@ proto_register_syncthing(void)
             NULL, HFILL}
         },
         { &hf_syncthing_local_address,
-            { "Sync Service Address", "syncthing.local.address",
+            { "Sync address", "syncthing.local.address",
             FT_STRING, BASE_NONE,
             NULL, 0x0,
             NULL, HFILL }
