@@ -263,7 +263,7 @@ dissect_next_field(syncthing_local_discovery_summary *summary, guint offset)
         { 3, 0, &dissect_instance_id, ett_syncthing_local_instance_id }
     };
 
-    return dissect_protobuf_field(summary, offset, field_definitions, sizeof(field_definitions));
+    return dissect_protobuf_field(summary, offset, field_definitions, sizeof(field_definitions)/sizeof(field_definitions[0]));
 }
 
 static int
