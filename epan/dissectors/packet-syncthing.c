@@ -18,6 +18,12 @@
 
 #define SYNCTHING_LOCAL_DISCOVERY_PORT 21027
 
+// TODO: Add an expert error?
+#define CONSTRAIN_TO_GINT_OR_FAIL(constrained, minus) \
+    if ((constrained) > G_MAXINT - (minus)) { \
+        return -1;\
+    }
+
 typedef const struct {
     tvbuff_t *tvb;
     packet_info *pinfo;
@@ -28,8 +34,8 @@ typedef const struct {
 typedef gint (*syncthing_protobuf_field_handler)(syncthing_local_discovery_summary *summary, proto_item *header, guint offset);
 
 typedef const struct {
-    int tag;
-    int wire_type;
+    guint64 tag;
+    guint8 wire_type;
     syncthing_protobuf_field_handler handler;
     int ett;
 } syncthing_protobuf_field_definition;
@@ -42,6 +48,7 @@ static int proto_syncthing_local_discovery = -1;
 
 
 /* Fields */
+// TODO: For the sake of consistency, should I use gint everywhere?
 static int hf_syncthing_protobuf_entry = -1;
 static int hf_syncthing_protobuf_key = -1;
 static int hf_syncthing_protobuf_tag = -1;
@@ -72,19 +79,22 @@ dissect_node_id(syncthing_local_discovery_summary *summary, proto_item *header, 
     guint64 field_length;
 
     varint_length = tvb_get_varint(summary->tvb, offset, 4, &field_length, ENC_VARINT_PROTOBUF);
-    if (varint_length != 0) {
+    if (varint_length != 0 && field_length <= G_MAXINT) {
+        CONSTRAIN_TO_GINT_OR_FAIL(field_length, varint_length);
+        gint buflen = (gint)field_length;
+
         offset += varint_length;
 
-        const guint8 *buf = tvb_get_ptr(summary->tvb, offset, field_length);
+        const guint8 *buf = tvb_get_ptr(summary->tvb, offset, buflen);
 
         // TODO: Format ID
-        proto_tree_add_bytes(summary->tree, hf_syncthing_local_node_id, summary->tvb, offset, field_length, buf);
+        proto_tree_add_bytes(summary->tree, hf_syncthing_local_node_id, summary->tvb, offset, buflen, buf);
         proto_item_set_text(header, "Node ID: <TODO>");
 
-        return varint_length + field_length;
+        return varint_length + buflen;
     }
     else {
-        // TODO: Add expert info
+        // TODO: invalid varint, add expert info
         return -1;
     }
 }
@@ -98,6 +108,9 @@ dissect_address(syncthing_local_discovery_summary *summary, proto_item *header, 
 
     varint_length = tvb_get_varint(summary->tvb, offset, 4, &field_length, ENC_VARINT_PROTOBUF);
     if (varint_length != 0) {
+        CONSTRAIN_TO_GINT_OR_FAIL(field_length, varint_length);
+        gint buflen = (gint)field_length;
+
         offset += varint_length;
 
         proto_tree_add_uint64(
@@ -109,8 +122,8 @@ dissect_address(syncthing_local_discovery_summary *summary, proto_item *header, 
             field_length
         );
 
-        guint8 *buf = (guint8*) wmem_alloc(wmem_packet_scope(), field_length + 1);
-        tvb_get_nstringz0(summary->tvb, offset, field_length + 1, buf);
+        guint8 *buf = (guint8*) wmem_alloc(wmem_packet_scope(), buflen + 1);
+        tvb_get_nstringz0(summary->tvb, offset, buflen + 1, buf);
         proto_tree_add_string(summary->tree, hf_syncthing_local_address, summary->tvb, offset, field_length, buf);
 
         // TODO: Can I reuse the labels I put in the hf fields?
@@ -119,7 +132,7 @@ dissect_address(syncthing_local_discovery_summary *summary, proto_item *header, 
         // TODO: Is it correct to free this here?
         wmem_free(wmem_packet_scope(), buf);
 
-        return varint_length + field_length;
+        return varint_length + buflen;
     }
     else {
         // TODO: Add expert info
@@ -165,7 +178,7 @@ dissect_protobuf_field(
     if (varint_length != 0) {
         offset += varint_length;
 
-        const int tag = key >> 3;
+        const guint64 tag = key >> 3;
         guint8 wire_type = key & 0x07;
 
         for (int i = 0; i < defcount; ++i) {
@@ -197,7 +210,7 @@ dissect_protobuf_field(
                         start_offset,
                         varint_length,
                         key,
-                        "Protobuf Key, ID: %i, Wire type: %i",
+                        "Protobuf Key, ID: %li, Wire type: %i",
                         tag, wire_type
                     );
                     proto_item *key_tree = proto_item_add_subtree(key_item, ett_syncthing_protobuf_key);
