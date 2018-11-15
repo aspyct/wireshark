@@ -124,7 +124,7 @@ dissect_address(syncthing_local_discovery_summary *summary, proto_item *header, 
 
         guint8 *buf = (guint8*) wmem_alloc(wmem_packet_scope(), buflen + 1);
         tvb_get_nstringz0(summary->tvb, offset, buflen + 1, buf);
-        proto_tree_add_string(summary->tree, hf_syncthing_local_address, summary->tvb, offset, field_length, buf);
+        proto_tree_add_string(summary->tree, hf_syncthing_local_address, summary->tvb, offset, buflen, buf);
 
         // TODO: Can I reuse the labels I put in the hf fields?
         proto_item_set_text(header, "Sync address: %s", buf);
