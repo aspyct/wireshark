@@ -44,6 +44,8 @@ static int proto_syncthing_local_discovery = -1;
 /* Fields */
 static int hf_syncthing_protobuf_entry = -1;
 static int hf_syncthing_protobuf_key = -1;
+static int hf_syncthing_protobuf_tag = -1;
+static int hf_syncthing_protobuf_wire_type = -1;
 static int hf_syncthing_protobuf_field_length = -1;
 static int hf_syncthing_local_magic = -1;
 static int hf_syncthing_local_machine_id = -1;
@@ -56,6 +58,7 @@ static gint ett_syncthing_local = -1;
 static gint ett_syncthing_local_machine_id = -1;
 static gint ett_syncthing_local_address = -1;
 static gint ett_syncthing_local_instance_id = -1;
+static gint ett_syncthing_protobuf_key = -1;
 
 
 /* Expert infos */
@@ -163,7 +166,7 @@ dissect_protobuf_field(
         offset += varint_length;
 
         const int tag = key >> 3;
-        int wire_type = key & 0x07;
+        guint8 wire_type = key & 0x07;
 
         for (int i = 0; i < defcount; ++i) {
             syncthing_protobuf_field_definition *def = &definitions[i];
@@ -172,19 +175,36 @@ dissect_protobuf_field(
                 if (wire_type == def->wire_type) {
                     // TODO: This is a lot of ifs. Can I make it flatter?
 
+                    // TODO: This results in a weird filter
+                    // syncthing.protobuf.entry == "[Empty]"
+                    // Can we fix this once we have the length?
                     proto_item *header = proto_tree_add_item(
                         summary->tree,
                         hf_syncthing_protobuf_entry,
                         summary->tvb,
                         start_offset,
-                        0, // don't know yet,
+                        0, // we'll know it after parsing the field
                         ENC_NA
                     );
                     proto_tree *subtree = proto_item_add_subtree(header, def->ett);
 
                     // TODO: This should probably be a bit field or something?
                     // Or a subtree itself
-                    proto_tree_add_uint64(subtree, hf_syncthing_protobuf_key, summary->tvb, start_offset, varint_length, key);
+                    proto_item *key_item = proto_tree_add_uint64_format(
+                        subtree,
+                        hf_syncthing_protobuf_key,
+                        summary->tvb,
+                        start_offset,
+                        varint_length,
+                        key,
+                        "Protobuf Key, ID: %i, Wire type: %i",
+                        tag, wire_type
+                    );
+                    proto_item *key_tree = proto_item_add_subtree(key_item, ett_syncthing_protobuf_key);
+
+                    // TODO: These two should be bit fields instead
+                    proto_tree_add_int(key_tree, hf_syncthing_protobuf_tag, summary->tvb, start_offset, varint_length, tag);
+                    proto_tree_add_uint(key_tree, hf_syncthing_protobuf_wire_type, summary->tvb, start_offset, varint_length, wire_type);
 
                     syncthing_local_discovery_summary subsummary = { summary->tvb, summary->pinfo, subtree };
                     gint result = def->handler(&subsummary, header, offset);
@@ -239,7 +259,6 @@ dissect_syncthing_local_discovery(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
             col_set_str(pinfo->cinfo, COL_PROTOCOL, "Syncthing");
             col_clear(pinfo->cinfo, COL_INFO);
 
-
             proto_item *ti = proto_tree_add_item(tree, proto_syncthing_local_discovery, tvb, 0,-1, ENC_NA);
             proto_tree *syncthing_tree = proto_item_add_subtree(ti, ett_syncthing_local);
             proto_tree_add_item(syncthing_tree, hf_syncthing_local_magic, tvb, 0, 4, ENC_BIG_ENDIAN);
@@ -282,8 +301,20 @@ proto_register_syncthing(void)
             NULL, 0x0,
             NULL, HFILL }
         },
+        { &hf_syncthing_protobuf_tag,
+            { "ID", "syncthing.protobuf.tag",
+            FT_INT32, BASE_DEC,
+            NULL, 0x0,
+            NULL, HFILL }
+        },
+        { &hf_syncthing_protobuf_wire_type,
+            { "Wire type", "syncthing.protobuf.wire_type",
+            FT_UINT8, BASE_DEC,
+            NULL, 0x0,
+            NULL, HFILL }
+        },
         { &hf_syncthing_protobuf_field_length,
-            { "Protobuf field length", "syncthing.protobuf.length",
+            { "Field length", "syncthing.protobuf.length",
             FT_UINT64, BASE_DEC,
             NULL, 0x0,
             NULL, HFILL }
@@ -318,7 +349,8 @@ proto_register_syncthing(void)
         &ett_syncthing_local,
         &ett_syncthing_local_machine_id,
         &ett_syncthing_local_address,
-        &ett_syncthing_local_instance_id
+        &ett_syncthing_local_instance_id,
+        &ett_syncthing_protobuf_key
     };
 
     proto_syncthing_local_discovery = proto_register_protocol(
