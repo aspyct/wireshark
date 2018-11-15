@@ -66,7 +66,7 @@ static gint ett_syncthing_protobuf_key = -1;
 
 
 gint
-dissect_node_id(syncthing_local_discovery_summary *summary, proto_item *header _U_, guint offset)
+dissect_node_id(syncthing_local_discovery_summary *summary, proto_item *header, guint offset)
 {
     guint varint_length;
     guint64 field_length;
@@ -90,7 +90,7 @@ dissect_node_id(syncthing_local_discovery_summary *summary, proto_item *header _
 }
 
 gint
-dissect_address(syncthing_local_discovery_summary *summary, proto_item *header _U_, const guint start_offset)
+dissect_address(syncthing_local_discovery_summary *summary, proto_item *header, const guint start_offset)
 {
     guint varint_length;
     guint64 field_length;
@@ -128,7 +128,7 @@ dissect_address(syncthing_local_discovery_summary *summary, proto_item *header _
 }
 
 gint
-dissect_instance_id(syncthing_local_discovery_summary *summary, proto_item *header _U_, guint offset)
+dissect_instance_id(syncthing_local_discovery_summary *summary, proto_item *header, guint offset)
 {
     gint varint_length;
     gint64 instance_id;
