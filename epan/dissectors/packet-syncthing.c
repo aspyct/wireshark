@@ -48,14 +48,14 @@ static int hf_syncthing_protobuf_tag = -1;
 static int hf_syncthing_protobuf_wire_type = -1;
 static int hf_syncthing_protobuf_field_length = -1;
 static int hf_syncthing_local_magic = -1;
-static int hf_syncthing_local_machine_id = -1;
+static int hf_syncthing_local_node_id = -1;
 static int hf_syncthing_local_address = -1;
 static int hf_syncthing_local_instance_id = -1;
 
 
 /* Trees */
 static gint ett_syncthing_local = -1;
-static gint ett_syncthing_local_machine_id = -1;
+static gint ett_syncthing_local_node_id = -1;
 static gint ett_syncthing_local_address = -1;
 static gint ett_syncthing_local_instance_id = -1;
 static gint ett_syncthing_protobuf_key = -1;
@@ -66,7 +66,7 @@ static gint ett_syncthing_protobuf_key = -1;
 
 
 gint
-dissect_machine_id(syncthing_local_discovery_summary *summary, proto_item *header _U_, guint offset)
+dissect_node_id(syncthing_local_discovery_summary *summary, proto_item *header _U_, guint offset)
 {
     guint varint_length;
     guint64 field_length;
@@ -78,8 +78,8 @@ dissect_machine_id(syncthing_local_discovery_summary *summary, proto_item *heade
         const guint8 *buf = tvb_get_ptr(summary->tvb, offset, field_length);
 
         // TODO: Format ID
-        proto_tree_add_bytes(summary->tree, hf_syncthing_local_machine_id, summary->tvb, offset, field_length, buf);
-        proto_item_set_text(header, "Machine ID: <TODO>");
+        proto_tree_add_bytes(summary->tree, hf_syncthing_local_node_id, summary->tvb, offset, field_length, buf);
+        proto_item_set_text(header, "Node ID: <TODO>");
 
         return varint_length + field_length;
     }
@@ -239,7 +239,7 @@ dissect_next_field(syncthing_local_discovery_summary *summary, guint offset)
     // TODO: This should be initialized only once, maybe in the proto_register_syncthing?
     syncthing_protobuf_field_definition field_definitions[] = {
         /* { tag, wire_type, handler, ett, label } */
-        { 1, 2, &dissect_machine_id, ett_syncthing_local_machine_id },
+        { 1, 2, &dissect_node_id, ett_syncthing_local_node_id },
         { 2, 2, &dissect_address, ett_syncthing_local_address },
         { 3, 0, &dissect_instance_id, ett_syncthing_local_instance_id }
     };
@@ -325,8 +325,8 @@ proto_register_syncthing(void)
             NULL, 0x0,
             NULL, HFILL }
         },
-        { &hf_syncthing_local_machine_id,
-            { "ID", "syncthing.local.machine_id",
+        { &hf_syncthing_local_node_id,
+            { "Node ID", "syncthing.local.node_id",
             FT_BYTES, BASE_NONE,
             NULL, 0x0,
             NULL, HFILL}
@@ -347,7 +347,7 @@ proto_register_syncthing(void)
 
     static gint *ett[] = {
         &ett_syncthing_local,
-        &ett_syncthing_local_machine_id,
+        &ett_syncthing_local_node_id,
         &ett_syncthing_local_address,
         &ett_syncthing_local_instance_id,
         &ett_syncthing_protobuf_key
