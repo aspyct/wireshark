@@ -216,14 +216,20 @@ dissect_protobuf_field(
                     proto_item *key_tree = proto_item_add_subtree(key_item, ett_syncthing_protobuf_key);
 
                     // TODO: These two should be bit fields instead
-                    proto_tree_add_int(key_tree, hf_syncthing_protobuf_tag, summary->tvb, start_offset, varint_length, tag);
+                    proto_tree_add_uint64(key_tree, hf_syncthing_protobuf_tag, summary->tvb, start_offset, varint_length, tag);
                     proto_tree_add_uint(key_tree, hf_syncthing_protobuf_wire_type, summary->tvb, start_offset, varint_length, wire_type);
 
                     syncthing_local_discovery_summary subsummary = { summary->tvb, summary->pinfo, subtree };
                     gint result = def->handler(&subsummary, header, offset);
 
-                    proto_item_set_len(header, varint_length + result);
-                    return varint_length + result;
+                    if (result == -1) {
+                        // TODO: Invalid format. Add expert info
+                        return -1;
+                    }
+
+                    gint total_length = varint_length + result;
+                    proto_item_set_len(header, total_length);
+                    return total_length;
                 }
                 else {
                     // TODO: Add expert info
@@ -316,7 +322,7 @@ proto_register_syncthing(void)
         },
         { &hf_syncthing_protobuf_tag,
             { "ID", "syncthing.protobuf.tag",
-            FT_INT32, BASE_DEC,
+            FT_UINT64, BASE_DEC,
             NULL, 0x0,
             NULL, HFILL }
         },
