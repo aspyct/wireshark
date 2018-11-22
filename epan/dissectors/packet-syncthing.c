@@ -73,10 +73,11 @@ static gint ett_syncthing_protobuf_key = -1;
 
 
 static gint
-dissect_node_id(syncthing_local_discovery_summary *summary, proto_item *header, guint offset)
+dissect_node_id(syncthing_local_discovery_summary *summary, proto_item *header, guint start_offset)
 {
     guint varint_length;
     guint64 field_length;
+    guint offset = start_offset;
 
     varint_length = tvb_get_varint(summary->tvb, offset, 4, &field_length, ENC_VARINT_PROTOBUF);
     if (varint_length != 0 && field_length <= G_MAXINT) {
@@ -84,6 +85,15 @@ dissect_node_id(syncthing_local_discovery_summary *summary, proto_item *header, 
         gint buflen = (gint)field_length;
 
         offset += varint_length;
+
+        proto_tree_add_uint64(
+            summary->tree,
+            hf_syncthing_protobuf_field_length,
+            summary->tvb,
+            start_offset,
+            varint_length,
+            field_length
+        );
 
         const guint8 *buf = tvb_get_ptr(summary->tvb, offset, buflen);
 
@@ -150,8 +160,6 @@ dissect_instance_id(syncthing_local_discovery_summary *summary, proto_item *head
     varint_length = tvb_get_varint(summary->tvb, offset, 10, &instance_id, ENC_VARINT_PROTOBUF);
     if (varint_length != 0)
     {
-        // TODO: How should I display this instance ID?
-        // Check with the guys from syncthing
         proto_tree_add_int64(summary->tree, hf_syncthing_local_instance_id, summary->tvb, offset, varint_length, instance_id);
         proto_item_set_text(header, "Instance ID: %" G_GINT64_MODIFIER "i", instance_id);
         return varint_length;
