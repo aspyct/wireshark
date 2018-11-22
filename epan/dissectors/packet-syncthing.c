@@ -139,9 +139,6 @@ dissect_address(syncthing_local_discovery_summary *summary, proto_item *header, 
         // TODO: Can I reuse the labels I put in the hf fields?
         proto_item_set_text(header, "Sync address: %s", buf);
 
-        // TODO: Is it correct to free this here?
-        wmem_free(wmem_packet_scope(), buf);
-
         return varint_length + buflen;
     }
     else {
