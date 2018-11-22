@@ -17,6 +17,7 @@
 #include <epan/tvbuff.h>
 
 #define SYNCTHING_LOCAL_DISCOVERY_PORT 21027
+#define MAX_VARINT_LENGTH 10
 
 // TODO: Add an expert error?
 #define CONSTRAIN_TO_GINT_OR_FAIL(constrained, minus) \
@@ -116,7 +117,7 @@ dissect_address(syncthing_local_discovery_summary *summary, proto_item *header, 
     guint64 field_length;
     guint offset = start_offset;
 
-    varint_length = tvb_get_varint(summary->tvb, offset, 4, &field_length, ENC_VARINT_PROTOBUF);
+    varint_length = tvb_get_varint(summary->tvb, offset, MAX_VARINT_LENGTH, &field_length, ENC_VARINT_PROTOBUF);
     if (varint_length != 0) {
         CONSTRAIN_TO_GINT_OR_FAIL(field_length, varint_length);
         gint buflen = (gint)field_length;
@@ -153,8 +154,7 @@ dissect_instance_id(syncthing_local_discovery_summary *summary, proto_item *head
     gint varint_length;
     gint64 instance_id;
 
-    // The maximum byte length of a int64 in varint can reach 10
-    varint_length = tvb_get_varint(summary->tvb, offset, 10, &instance_id, ENC_VARINT_PROTOBUF);
+    varint_length = tvb_get_varint(summary->tvb, offset, MAX_VARINT_LENGTH, &instance_id, ENC_VARINT_PROTOBUF);
     if (varint_length != 0)
     {
         proto_tree_add_int64(summary->tree, hf_syncthing_local_instance_id, summary->tvb, offset, varint_length, instance_id);
@@ -180,71 +180,77 @@ dissect_protobuf_field(
     guint offset = start_offset;
 	
     varint_length = tvb_get_varint(summary->tvb, offset, 4, &key, ENC_VARINT_PROTOBUF);
-    if (varint_length != 0) {
-        offset += varint_length;
 
-        const guint64 tag = key >> 3;
-        guint8 wire_type = key & 0x07;
-
-        for (int i = 0; i < defcount; ++i) {
-            syncthing_protobuf_field_definition *def = &definitions[i];
-
-            if (tag == def->tag) {
-                if (wire_type == def->wire_type) {
-                    // TODO: This is a lot of ifs. Can I make it flatter?
-
-                    // TODO: This results in a weird filter
-                    // syncthing.protobuf.entry == "[Empty]"
-                    // Can we fix this once we have the length?
-                    proto_item *header = proto_tree_add_item(
-                        summary->tree,
-                        hf_syncthing_protobuf_entry,
-                        summary->tvb,
-                        start_offset,
-                        0, // we'll know it after parsing the field
-                        ENC_NA
-                    );
-                    proto_tree *subtree = proto_item_add_subtree(header, def->ett);
-
-                    // TODO: This should probably be a bit field or something?
-                    // Or a subtree itself
-                    proto_item *key_item = proto_tree_add_uint64_format(
-                        subtree,
-                        hf_syncthing_protobuf_key,
-                        summary->tvb,
-                        start_offset,
-                        varint_length,
-                        key,
-                        "Protobuf Key, ID: %" G_GINT64_MODIFIER "i, Wire type: %i",
-                        tag, wire_type
-                    );
-                    proto_item *key_tree = proto_item_add_subtree(key_item, ett_syncthing_protobuf_key);
-
-                    // TODO: These two should be bit fields instead
-                    proto_tree_add_uint64(key_tree, hf_syncthing_protobuf_tag, summary->tvb, start_offset, varint_length, tag);
-                    proto_tree_add_uint(key_tree, hf_syncthing_protobuf_wire_type, summary->tvb, start_offset, varint_length, wire_type);
-
-                    syncthing_local_discovery_summary subsummary = { summary->tvb, summary->pinfo, subtree };
-                    gint result = def->handler(&subsummary, header, offset);
-
-                    if (result == -1) {
-                        // TODO: Invalid format. Add expert info
-                        return -1;
-                    }
-
-                    gint total_length = varint_length + result;
-                    proto_item_set_len(header, total_length);
-                    return total_length;
-                }
-                else {
-                    // TODO: Add expert info
-                    return -1;
-                }
-            }
-        }
+    if (varint_length == 0) {
+        // TODO: Invalid varint. Add expert info
+        return -1;
     }
 
-    // TODO: Invalid varint. Add expert info
+    offset += varint_length;
+
+    const guint64 tag = key >> 3;
+    guint8 wire_type = key & 0x07;
+
+    for (int i = 0; i < defcount; ++i) {
+        syncthing_protobuf_field_definition *def = &definitions[i];
+
+        if (tag != def->tag) {
+            // This definition doesn't handle the current tag, try the next one
+            continue;
+        }
+
+        if (wire_type != def->wire_type) {
+            // Unexpected wire type, packet is invalid
+            // TODO: Add expert info
+            return -1;
+        }
+
+        // TODO: This results in a weird filter
+        // syncthing.protobuf.entry == "[Empty]"
+        // Can we fix this once we have the length?
+        proto_item *header = proto_tree_add_item(
+            summary->tree,
+            hf_syncthing_protobuf_entry,
+            summary->tvb,
+            start_offset,
+            0, // we'll know it after parsing the field
+            ENC_NA
+        );
+        proto_tree *subtree = proto_item_add_subtree(header, def->ett);
+
+        // TODO: This should probably be a bit field or something?
+        // Or a subtree itself
+        proto_item *key_item = proto_tree_add_uint64_format(
+            subtree,
+            hf_syncthing_protobuf_key,
+            summary->tvb,
+            start_offset,
+            varint_length,
+            key,
+            "Protobuf Key, ID: %" G_GINT64_MODIFIER "i, Wire type: %i",
+            tag, wire_type
+        );
+        proto_item *key_tree = proto_item_add_subtree(key_item, ett_syncthing_protobuf_key);
+
+        // TODO: These two should be bit fields instead
+        proto_tree_add_uint64(key_tree, hf_syncthing_protobuf_tag, summary->tvb, start_offset, varint_length, tag);
+        proto_tree_add_uint(key_tree, hf_syncthing_protobuf_wire_type, summary->tvb, start_offset, varint_length, wire_type);
+
+        syncthing_local_discovery_summary subsummary = { summary->tvb, summary->pinfo, subtree };
+        gint result = def->handler(&subsummary, header, offset);
+
+        if (result == -1) {
+            // TODO: Invalid format. Add expert info
+            return -1;
+        }
+
+        gint total_length = varint_length + result;
+        proto_item_set_len(header, total_length);
+        return total_length;
+    }
+
+    // No handler defined for this tag
+    // TODO: Add expert info
     return -1;
 }
 
