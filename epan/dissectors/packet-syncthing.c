@@ -218,8 +218,6 @@ dissect_protobuf_field(
         );
         proto_tree *subtree = proto_item_add_subtree(header, def->ett);
 
-        // TODO: This should probably be a bit field or something?
-        // Or a subtree itself
         proto_item *key_item = proto_tree_add_uint64_format(
             subtree,
             hf_syncthing_protobuf_key,
@@ -280,7 +278,7 @@ dissect_next_field(syncthing_local_discovery_summary *summary, guint offset)
 static int
 dissect_syncthing_local_discovery(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
 {
-    // The first four bytes are 0x2EA7D90B in networ.k (big endian) byte order.
+    // The first four bytes are 0x2EA7D90B in network (big endian) byte order.
     if (tvb_bytes_exist(tvb, 0, 4)) {
         guint32 magic = tvb_get_ntohl(tvb, 0);
     
