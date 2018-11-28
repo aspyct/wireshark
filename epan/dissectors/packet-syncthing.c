@@ -25,14 +25,7 @@
         return -1;\
     }
 
-typedef const struct {
-    tvbuff_t *tvb;
-    packet_info *pinfo;
-    proto_tree *tree;
-} syncthing_local_discovery_summary;
-// We all live in a yellow summary!
-
-typedef gint (*syncthing_protobuf_field_handler)(syncthing_local_discovery_summary *summary, proto_item *header, guint offset);
+typedef gint (*syncthing_protobuf_field_handler)(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_item *header, guint offset);
 
 typedef const struct {
     guint64 tag;
@@ -70,17 +63,17 @@ static gint ett_syncthing_protobuf_key = -1;
 
 
 /* Expert infos */
-// TODO: static expert_field ei_syncthing_local_malformed = EI_INIT;
+static expert_field ei_syncthing_local_malformed = EI_INIT;
 
 
 static gint
-dissect_node_id(syncthing_local_discovery_summary *summary, proto_item *header, guint start_offset)
+dissect_node_id(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, proto_item *header, guint start_offset)
 {
     guint varint_length;
     guint64 field_length;
     guint offset = start_offset;
 
-    varint_length = tvb_get_varint(summary->tvb, offset, 4, &field_length, ENC_VARINT_PROTOBUF);
+    varint_length = tvb_get_varint(tvb, offset, 4, &field_length, ENC_VARINT_PROTOBUF);
     if (varint_length != 0 && field_length <= G_MAXINT) {
         CONSTRAIN_TO_GINT_OR_FAIL(field_length, varint_length);
         gint buflen = (gint)field_length;
@@ -88,18 +81,18 @@ dissect_node_id(syncthing_local_discovery_summary *summary, proto_item *header, 
         offset += varint_length;
 
         proto_tree_add_uint64(
-            summary->tree,
+            tree,
             hf_syncthing_protobuf_field_length,
-            summary->tvb,
+            tvb,
             start_offset,
             varint_length,
             field_length
         );
 
-        const guint8 *buf = tvb_get_ptr(summary->tvb, offset, buflen);
+        const guint8 *buf = tvb_get_ptr(tvb, offset, buflen);
 
         // TODO: Format ID
-        proto_tree_add_bytes(summary->tree, hf_syncthing_local_node_id, summary->tvb, offset, buflen, buf);
+        proto_tree_add_bytes(tree, hf_syncthing_local_node_id, tvb, offset, buflen, buf);
         proto_item_set_text(header, "Node ID: <TODO>");
 
         return varint_length + buflen;
@@ -111,13 +104,13 @@ dissect_node_id(syncthing_local_discovery_summary *summary, proto_item *header, 
 }
 
 static gint
-dissect_address(syncthing_local_discovery_summary *summary, proto_item *header, const guint start_offset)
+dissect_address(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, proto_item *header, const guint start_offset)
 {
     guint varint_length;
     guint64 field_length;
     guint offset = start_offset;
 
-    varint_length = tvb_get_varint(summary->tvb, offset, MAX_VARINT_LENGTH, &field_length, ENC_VARINT_PROTOBUF);
+    varint_length = tvb_get_varint(tvb, offset, MAX_VARINT_LENGTH, &field_length, ENC_VARINT_PROTOBUF);
     if (varint_length != 0) {
         CONSTRAIN_TO_GINT_OR_FAIL(field_length, varint_length);
         gint buflen = (gint)field_length;
@@ -125,17 +118,17 @@ dissect_address(syncthing_local_discovery_summary *summary, proto_item *header, 
         offset += varint_length;
 
         proto_tree_add_uint64(
-            summary->tree,
+            tree,
             hf_syncthing_protobuf_field_length,
-            summary->tvb,
+            tvb,
             start_offset,
             varint_length,
             field_length
         );
 
         guint8 *buf = (guint8*) wmem_alloc(wmem_packet_scope(), buflen + 1);
-        tvb_get_nstringz0(summary->tvb, offset, buflen + 1, buf);
-        proto_tree_add_string(summary->tree, hf_syncthing_local_address, summary->tvb, offset, buflen, buf);
+        tvb_get_nstringz0(tvb, offset, buflen + 1, buf);
+        proto_tree_add_string(tree, hf_syncthing_local_address, tvb, offset, buflen, buf);
 
         // TODO: Can I reuse the labels I put in the hf fields?
         proto_item_set_text(header, "Sync address: %s", buf);
@@ -149,15 +142,15 @@ dissect_address(syncthing_local_discovery_summary *summary, proto_item *header, 
 }
 
 static gint
-dissect_instance_id(syncthing_local_discovery_summary *summary, proto_item *header, guint offset)
+dissect_instance_id(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, proto_item *header, guint offset)
 {
     gint varint_length;
     gint64 instance_id;
 
-    varint_length = tvb_get_varint(summary->tvb, offset, MAX_VARINT_LENGTH, &instance_id, ENC_VARINT_PROTOBUF);
+    varint_length = tvb_get_varint(tvb, offset, MAX_VARINT_LENGTH, &instance_id, ENC_VARINT_PROTOBUF);
     if (varint_length != 0)
     {
-        proto_tree_add_int64(summary->tree, hf_syncthing_local_instance_id, summary->tvb, offset, varint_length, instance_id);
+        proto_tree_add_int64(tree, hf_syncthing_local_instance_id, tvb, offset, varint_length, instance_id);
         proto_item_set_text(header, "Instance ID: %" G_GINT64_MODIFIER "i", instance_id);
         return varint_length;
     }
@@ -170,7 +163,10 @@ dissect_instance_id(syncthing_local_discovery_summary *summary, proto_item *head
 
 static gint
 dissect_protobuf_field(
-    const syncthing_local_discovery_summary * summary,
+    // TODO: Can I make this const? And in other functions?
+    tvbuff_t *tvb,
+    packet_info *pinfo,
+    proto_tree *tree,
     const guint start_offset,
     const syncthing_protobuf_field_definition *definitions,
     const int defcount)
@@ -179,7 +175,7 @@ dissect_protobuf_field(
     guint64 key;
     guint offset = start_offset;
 	
-    varint_length = tvb_get_varint(summary->tvb, offset, 4, &key, ENC_VARINT_PROTOBUF);
+    varint_length = tvb_get_varint(tvb, offset, 4, &key, ENC_VARINT_PROTOBUF);
 
     if (varint_length == 0) {
         // TODO: Invalid varint. Add expert info
@@ -209,9 +205,9 @@ dissect_protobuf_field(
         // syncthing.protobuf.entry == "[Empty]"
         // Can we fix this once we have the length?
         proto_item *header = proto_tree_add_item(
-            summary->tree,
+            tree,
             hf_syncthing_protobuf_entry,
-            summary->tvb,
+            tvb,
             start_offset,
             0, // we'll know it after parsing the field
             ENC_NA
@@ -221,7 +217,7 @@ dissect_protobuf_field(
         proto_item *key_item = proto_tree_add_uint64_format(
             subtree,
             hf_syncthing_protobuf_key,
-            summary->tvb,
+            tvb,
             start_offset,
             varint_length,
             key,
@@ -231,11 +227,10 @@ dissect_protobuf_field(
         proto_item *key_tree = proto_item_add_subtree(key_item, ett_syncthing_protobuf_key);
 
         // TODO: These two should be bit fields instead
-        proto_tree_add_uint64(key_tree, hf_syncthing_protobuf_tag, summary->tvb, start_offset, varint_length, tag);
-        proto_tree_add_uint(key_tree, hf_syncthing_protobuf_wire_type, summary->tvb, start_offset, varint_length, wire_type);
+        proto_tree_add_uint64(key_tree, hf_syncthing_protobuf_tag, tvb, start_offset, varint_length, tag);
+        proto_tree_add_uint(key_tree, hf_syncthing_protobuf_wire_type, tvb, start_offset, varint_length, wire_type);
 
-        syncthing_local_discovery_summary subsummary = { summary->tvb, summary->pinfo, subtree };
-        gint result = def->handler(&subsummary, header, offset);
+        gint result = def->handler(tvb, pinfo, subtree, header, offset);
 
         if (result == -1) {
             // TODO: Invalid format. Add expert info
@@ -253,7 +248,7 @@ dissect_protobuf_field(
 }
 
 static gint
-dissect_next_field(syncthing_local_discovery_summary *summary, guint offset)
+dissect_next_field(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, guint offset)
 {
     /*
     * The format is defined as follows:
@@ -272,42 +267,55 @@ dissect_next_field(syncthing_local_discovery_summary *summary, guint offset)
         { 3, 0, &dissect_instance_id, ett_syncthing_local_instance_id }
     };
 
-    return dissect_protobuf_field(summary, offset, field_definitions, sizeof(field_definitions)/sizeof(field_definitions[0]));
+    return dissect_protobuf_field(tvb, pinfo, tree, offset, field_definitions, array_length(field_definitions));
 }
 
 static int
 dissect_syncthing_local_discovery(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, void *data _U_)
 {
+    // We need a tree in every case, if only to display an error
+    col_set_str(pinfo->cinfo, COL_PROTOCOL, "Syncthing");
+    col_clear(pinfo->cinfo, COL_INFO);
+
+    proto_item *ti = proto_tree_add_item(tree, proto_syncthing_local_discovery, tvb, 0,-1, ENC_NA);
+
     // The first four bytes are 0x2EA7D90B in network (big endian) byte order.
     if (tvb_bytes_exist(tvb, 0, 4)) {
         guint32 magic = tvb_get_ntohl(tvb, 0);
     
-        if (magic == 0x2EA7D90B) {
-            // Ok, this looks like a syncthing local discovery packet
-            col_set_str(pinfo->cinfo, COL_PROTOCOL, "Syncthing");
-            col_clear(pinfo->cinfo, COL_INFO);
-
-            proto_item *ti = proto_tree_add_item(tree, proto_syncthing_local_discovery, tvb, 0,-1, ENC_NA);
-            proto_tree *syncthing_tree = proto_item_add_subtree(ti, ett_syncthing_local);
-            proto_tree_add_item(syncthing_tree, hf_syncthing_local_magic, tvb, 0, 4, ENC_BIG_ENDIAN);
-
-            guint offset = 4;
-            syncthing_local_discovery_summary summary = { tvb, pinfo, syncthing_tree };
-
-            while (offset < tvb_reported_length(tvb)) {
-                gint data_used = dissect_next_field(&summary, offset);
-
-                if (data_used != -1) {
-                    offset += data_used;
-                }
-                else {
-                    // TODO: Handle this error
-                    return offset;
-                }
-            }
+        if (magic != 0x2EA7D90B) {
+            // This is not a valid syncthing packet
+            // TODO: Test this
+            expert_add_info_format(
+                pinfo,
+                ti,
+                &ei_syncthing_local_malformed,
+                "Magic number is incorrect"
+            );
 
             return tvb_captured_length(tvb);
         }
+
+        proto_tree *syncthing_tree = proto_item_add_subtree(ti, ett_syncthing_local);
+        proto_tree_add_item(syncthing_tree, hf_syncthing_local_magic, tvb, 0, 4, ENC_BIG_ENDIAN);
+
+        guint offset = 4;
+
+        while (offset < tvb_reported_length(tvb)) {
+            gint data_used = dissect_next_field(tvb, pinfo, syncthing_tree, offset);
+
+            if (data_used != -1) {
+                offset += data_used;
+            }
+            else {
+                // The field could not be parsed
+                // TODO: Test this
+                expert_add_info_format(pinfo, ti, &ei_syncthing_local_malformed, "Could not parse field");
+                return tvb_captured_length(tvb);
+            }
+        }
+
+        return tvb_captured_length(tvb);
     }
 
     return 0;
@@ -373,6 +381,13 @@ proto_register_syncthing(void)
         }
     };
 
+    static ei_register_info ei[] = {
+        { &ei_syncthing_local_malformed,
+          { "syncthing.malformed", PI_MALFORMED, PI_ERROR,
+            "Packet is malformed", EXPFILL }
+        }
+    };
+
     static gint *ett[] = {
         &ett_syncthing_local,
         &ett_syncthing_local_node_id,
@@ -389,6 +404,9 @@ proto_register_syncthing(void)
 
     proto_register_field_array(proto_syncthing_local_discovery, hf, array_length(hf));
     proto_register_subtree_array(ett, array_length(ett));
+
+    expert_module_t *expert_local = expert_register_protocol(proto_syncthing_local_discovery);
+    expert_register_field_array(expert_local, ei, array_length(ei));
 }
 
 void
