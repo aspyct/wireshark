@@ -20,6 +20,7 @@
 #include "config.h"
 
 #include <glib.h>
+#include <strings.h>
 #include <epan/expert.h>
 #include <epan/packet.h>
 #include <epan/tvbuff.h>
@@ -83,22 +84,43 @@ static expert_field ei_syncthing_local_malformed = EI_INIT;
  * The developers of syncthing made a mistake while implementing it,
  * and later decided not to change it.
  *
- * TODO: Add url to forum post
+ * https://forum.syncthing.net/t/v0-9-0-new-node-id-format/478/6
  */
-/*
-static char // TODO: Is it correct to use char, or should I use a guint8 instead?
-generate_luhn_checksum_char(const char *str, gint length)
+static gint
+generate_nonstandard_luhn_checksum_char(const char *str, gint length, char *output)
 {
     static char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
-    static gint alphabet_length = array_length(alphabet);
+
+    // -1 to exclude the \0
+    static gint alphabet_length = array_length(alphabet) - 1;
 
     gint factor = 1;
     gint sum = 0;
 
     for (int i = 0; i < length; ++i) {
-        str
+        char *position = index(alphabet, str[i]);
+
+        if (position == NULL)
+        {
+            // Wrong encoding
+            return -1;
+        }
+
+        int codepoint = position - alphabet;
+
+        gint addend = factor * codepoint;
+        addend = (addend / alphabet_length) + (addend % alphabet_length);
+        sum += addend;
+
+        factor = factor == 2 ? 1 : 2;
     }
-}*/
+
+    gint remainder = sum % alphabet_length;
+    gint check_codepoint = (alphabet_length - remainder) % alphabet_length;
+
+    *output = alphabet[check_codepoint];
+    return 0;
+}
 
 static gint
 stringify_node_id(const guint8 *node_id_bytes, guint8 *node_id_string)
@@ -130,7 +152,11 @@ stringify_node_id(const guint8 *node_id_bytes, guint8 *node_id_string)
         memcpy(node_id_string + group_offset, base32_string + group_offset_in_base32, 7);
         node_id_string[dash1_offset] = '-';
         memcpy(node_id_string + part2_offset, base32_string + part2_offset_in_base32, 6);
-        node_id_string[luhn_offset] = '%';
+
+        if (generate_nonstandard_luhn_checksum_char(base32_string + group_offset_in_base32, 13, node_id_string + luhn_offset) == -1) {
+            return -1;
+        }
+
         node_id_string[dash2_offset] = '-';
     }
 
@@ -184,13 +210,18 @@ dissect_node_id(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_item 
         // 76SSOKL-4IDHXB7-KP6R3N5-IYVDIWL-SO5JUM7-ZI67AV2-E5576TD-ICSMNQV
         // A total of 63 chars. With the \0, we need 64 chars.
         guint8 node_id_string[NODE_ID_STRING_LENGTH + 1];
-        stringify_node_id(node_id_bytes, node_id_string);
 
-        // TODO: There was a remark on this from Peter. Fix it.
-        proto_tree_add_bytes(tree, hf_syncthing_local_node_id, tvb, offset, buflen, node_id_bytes);
-        proto_item_set_text(header, "Node ID: %s", node_id_string);
+        if (stringify_node_id(node_id_bytes, node_id_string) != -1) {
+            // TODO: There was a remark on this from Peter. Fix it.
+            proto_tree_add_bytes(tree, hf_syncthing_local_node_id, tvb, offset, buflen, node_id_bytes);
+            proto_item_set_text(header, "Node ID: %s", node_id_string);
 
-        return varint_length + buflen;
+            return varint_length + buflen;
+        }
+        else {
+            // TODO Couldn't format node ID. add expert info
+            return -1;
+        }
     }
     else {
         // TODO: invalid varint, add expert info
