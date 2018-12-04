@@ -9,15 +9,26 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
+// TODO: Should I do something about libwsutil0.symbols?
+// It contains a reference to the base32 method I moved
+// I could also add references to the new base32 encode method.
+
+// TODO: Test the fc00 dissector if possible. The change was small, but eh...
+
+// TODO: Make sure no _U_ is left
+
 #include "config.h"
 
 #include <glib.h>
 #include <epan/expert.h>
 #include <epan/packet.h>
 #include <epan/tvbuff.h>
+#include <wsutil/base32.h>
 
 #define SYNCTHING_LOCAL_DISCOVERY_PORT 21027
 #define MAX_VARINT_LENGTH 10
+#define NODE_ID_BYTE_LENGTH 32
+#define NODE_ID_STRING_LENGTH 63
 
 // TODO: Add an expert error?
 #define CONSTRAIN_TO_GINT_OR_FAIL(constrained, minus) \
@@ -66,8 +77,70 @@ static gint ett_syncthing_protobuf_key = -1;
 static expert_field ei_syncthing_local_malformed = EI_INIT;
 
 
+/*
+ * ! Beware !
+ * This is _not_ the standard luhn algorithm.
+ * The developers of syncthing made a mistake while implementing it,
+ * and later decided not to change it.
+ *
+ * TODO: Add url to forum post
+ */
+/*
+static char // TODO: Is it correct to use char, or should I use a guint8 instead?
+generate_luhn_checksum_char(const char *str, gint length)
+{
+    static char alphabet[] = "ABCDEFGHIJKLMNOPQRSTUVWXYZ234567";
+    static gint alphabet_length = array_length(alphabet);
+
+    gint factor = 1;
+    gint sum = 0;
+
+    for (int i = 0; i < length; ++i) {
+        str
+    }
+}*/
+
 static gint
-dissect_node_id(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, proto_item *header, guint start_offset)
+stringify_node_id(const guint8 *node_id_bytes, guint8 *node_id_string)
+{
+    size_t base32_length = ws_base32_encode_length(NODE_ID_BYTE_LENGTH);
+
+    guint8 *base32_string = (guint8 *) wmem_alloc(wmem_packet_scope(), base32_length + 1);
+    base32_string[base32_length] = '\0';
+
+    // This is slightly dangerous and might result in a segfault if function is called improperly
+    // TODO: Maybe replace the parameter with a tvb?
+    ws_base32_encode(node_id_bytes, NODE_ID_BYTE_LENGTH, base32_string);
+
+    // Now split the base32 string into our chunks
+    for (int i = 0; i < 4; ++i)
+    {
+        // Base32 -> SIDRUKEDIRUMIDEKILUIJITEPL7657PSETURITEKPS...
+        // Result -> SIDRUKE-DIRUMI.-DEKILUI-JITEPL.-7657PSE-TURITE.-KPS...
+        // where . is a luhn check char
+        int group_offset = i * 16;
+        int dash1_offset = group_offset + 7;
+        int part2_offset = dash1_offset + 1;
+        int luhn_offset = part2_offset + 6;
+        int dash2_offset = luhn_offset + 1;
+
+        int group_offset_in_base32 = i * 13;
+        int part2_offset_in_base32 = group_offset_in_base32 + 7;
+
+        memcpy(node_id_string + group_offset, base32_string + group_offset_in_base32, 7);
+        node_id_string[dash1_offset] = '-';
+        memcpy(node_id_string + part2_offset, base32_string + part2_offset_in_base32, 6);
+        node_id_string[luhn_offset] = '%';
+        node_id_string[dash2_offset] = '-';
+    }
+
+    node_id_string[NODE_ID_STRING_LENGTH] = '\0';
+
+    return 0;
+}
+
+static gint
+dissect_node_id(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_item *header, guint start_offset)
 {
     guint varint_length;
     guint64 field_length;
@@ -77,6 +150,18 @@ dissect_node_id(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, proto_i
     if (varint_length != 0 && field_length <= G_MAXINT) {
         CONSTRAIN_TO_GINT_OR_FAIL(field_length, varint_length);
         gint buflen = (gint)field_length;
+
+        if (buflen != NODE_ID_BYTE_LENGTH) {
+            // Not a valid node ID
+            // TODO: Add expert info
+            expert_add_info_format(
+                pinfo, header, &ei_syncthing_local_malformed,
+                "Invalid node ID length. Expected %i but got %i",
+                NODE_ID_BYTE_LENGTH, buflen
+            );
+
+            return -1;
+        }
 
         offset += varint_length;
 
@@ -89,11 +174,21 @@ dissect_node_id(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, proto_i
             field_length
         );
 
-        const guint8 *buf = tvb_get_ptr(tvb, offset, buflen);
+        const guint8 *node_id_bytes = tvb_get_ptr(tvb, offset, buflen);
 
-        // TODO: Format ID
-        proto_tree_add_bytes(tree, hf_syncthing_local_node_id, tvb, offset, buflen, buf);
-        proto_item_set_text(header, "Node ID: <TODO>");
+        // A node ID is split into 4 groups of 13+1 chars
+        // Each group is itself split into 2 groups of 8 chars
+        // The first 13 chars of each group are from the base32 string
+        // And the last char is the (syncthing-specific-)luhn checksum
+        // The resulting string looks like this:
+        // 76SSOKL-4IDHXB7-KP6R3N5-IYVDIWL-SO5JUM7-ZI67AV2-E5576TD-ICSMNQV
+        // A total of 63 chars. With the \0, we need 64 chars.
+        guint8 node_id_string[NODE_ID_STRING_LENGTH + 1];
+        stringify_node_id(node_id_bytes, node_id_string);
+
+        // TODO: There was a remark on this from Peter. Fix it.
+        proto_tree_add_bytes(tree, hf_syncthing_local_node_id, tvb, offset, buflen, node_id_bytes);
+        proto_item_set_text(header, "Node ID: %s", node_id_string);
 
         return varint_length + buflen;
     }
