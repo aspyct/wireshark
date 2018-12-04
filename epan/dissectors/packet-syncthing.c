@@ -179,7 +179,6 @@ dissect_node_id(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_item 
 
         if (buflen != NODE_ID_BYTE_LENGTH) {
             // Not a valid node ID
-            // TODO: Add expert info
             expert_add_info_format(
                 pinfo, header, &ei_syncthing_local_malformed,
                 "Invalid node ID length. Expected %i but got %i",
@@ -219,12 +218,12 @@ dissect_node_id(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_item 
             return varint_length + buflen;
         }
         else {
-            // TODO Couldn't format node ID. add expert info
+            expert_add_info_format(pinfo, header, &ei_syncthing_local_malformed, "Could not format node ID");
             return -1;
         }
     }
     else {
-        // TODO: invalid varint, add expert info
+        expert_add_info_format(pinfo, header, &ei_syncthing_local_malformed, "Invalid node ID length varint.");
         return -1;
     }
 }
@@ -262,7 +261,7 @@ dissect_address(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, proto_i
         return varint_length + buflen;
     }
     else {
-        // TODO: Add expert info
+        expert_add_info_format(pinfo, header, &ei_syncthing_local_malformed, "Invalid address length varint.");
         return -1;
     }
 }
@@ -282,7 +281,7 @@ dissect_instance_id(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, pro
     }
     else {
         // Could not read the instance ID as a varint
-        // TODO: Add expert info
+        expert_add_info_format(pinfo, header, &ei_syncthing_local_malformed, "Invalid instance ID varint.");
         return -1;
     }
 }
@@ -293,6 +292,7 @@ dissect_protobuf_field(
     tvbuff_t *tvb,
     packet_info *pinfo,
     proto_tree *tree,
+    proto_item *header,
     const guint start_offset,
     const syncthing_protobuf_field_definition *definitions,
     const int defcount)
@@ -304,7 +304,7 @@ dissect_protobuf_field(
     varint_length = tvb_get_varint(tvb, offset, 4, &key, ENC_VARINT_PROTOBUF);
 
     if (varint_length == 0) {
-        // TODO: Invalid varint. Add expert info
+        expert_add_info_format(pinfo, header, &ei_syncthing_local_malformed, "Invalid field key varint.");
         return -1;
     }
 
@@ -323,14 +323,17 @@ dissect_protobuf_field(
 
         if (wire_type != def->wire_type) {
             // Unexpected wire type, packet is invalid
-            // TODO: Add expert info
+            expert_add_info_format(
+                pinfo, header, &ei_syncthing_local_malformed,
+                "Unexpected wire type for field tag %li. Got %i, expected %i",
+                tag, wire_type, def->wire_type);
             return -1;
         }
 
         // TODO: This results in a weird filter
         // syncthing.protobuf.entry == "[Empty]"
         // Can we fix this once we have the length?
-        proto_item *header = proto_tree_add_item(
+        proto_item *field_header = proto_tree_add_item(
             tree,
             hf_syncthing_protobuf_entry,
             tvb,
@@ -338,7 +341,7 @@ dissect_protobuf_field(
             0, // we'll know it after parsing the field
             ENC_NA
         );
-        proto_tree *subtree = proto_item_add_subtree(header, def->ett);
+        proto_tree *subtree = proto_item_add_subtree(field_header, def->ett);
 
         proto_item *key_item = proto_tree_add_uint64_format(
             subtree,
@@ -356,15 +359,18 @@ dissect_protobuf_field(
         proto_tree_add_uint64(key_tree, hf_syncthing_protobuf_tag, tvb, start_offset, varint_length, tag);
         proto_tree_add_uint(key_tree, hf_syncthing_protobuf_wire_type, tvb, start_offset, varint_length, wire_type);
 
-        gint result = def->handler(tvb, pinfo, subtree, header, offset);
+        gint result = def->handler(tvb, pinfo, subtree, field_header, offset);
 
         if (result == -1) {
-            // TODO: Invalid format. Add expert info
+            expert_add_info_format(
+                pinfo, key_tree, &ei_syncthing_local_malformed,
+                "Could not parse field"
+            );
             return -1;
         }
 
         gint total_length = varint_length + result;
-        proto_item_set_len(header, total_length);
+        proto_item_set_len(field_header, total_length);
         return total_length;
     }
 
@@ -374,7 +380,7 @@ dissect_protobuf_field(
 }
 
 static gint
-dissect_next_field(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, guint offset)
+dissect_next_field(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_item *header, guint offset)
 {
     /*
     * The format is defined as follows:
@@ -393,7 +399,7 @@ dissect_next_field(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, guint of
         { 3, 0, &dissect_instance_id, ett_syncthing_local_instance_id }
     };
 
-    return dissect_protobuf_field(tvb, pinfo, tree, offset, field_definitions, array_length(field_definitions));
+    return dissect_protobuf_field(tvb, pinfo, tree, header, offset, field_definitions, array_length(field_definitions));
 }
 
 static int
@@ -428,7 +434,7 @@ dissect_syncthing_local_discovery(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
         guint offset = 4;
 
         while (offset < tvb_reported_length(tvb)) {
-            gint data_used = dissect_next_field(tvb, pinfo, syncthing_tree, offset);
+            gint data_used = dissect_next_field(tvb, pinfo, syncthing_tree, ti, offset);
 
             if (data_used != -1) {
                 offset += data_used;
