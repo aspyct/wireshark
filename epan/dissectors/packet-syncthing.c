@@ -14,8 +14,7 @@
 // I could also add references to the new base32 encode method.
 
 // TODO: Test the fc00 dissector if possible. The change was small, but eh...
-
-// TODO: Make sure no _U_ is left
+// There should be a pcap file in the bug that added support
 
 #include "config.h"
 
@@ -31,7 +30,6 @@
 #define NODE_ID_BYTE_LENGTH 32
 #define NODE_ID_STRING_LENGTH 63
 
-// TODO: Add an expert error?
 #define CONSTRAIN_TO_GINT_OR_FAIL(constrained, minus) \
     if ((constrained) > G_MAXINT - (minus)) { \
         return -1;\
@@ -130,8 +128,8 @@ stringify_node_id(const guint8 *node_id_bytes, guint8 *node_id_string)
     guint8 *base32_string = (guint8 *) wmem_alloc(wmem_packet_scope(), base32_length + 1);
     base32_string[base32_length] = '\0';
 
-    // This is slightly dangerous and might result in a segfault if function is called improperly
-    // TODO: Maybe replace the parameter with a tvb?
+    // This is slightly dangerous and might result in a segfault,
+    // if node_id_bytes is not the right length.
     ws_base32_encode(node_id_bytes, NODE_ID_BYTE_LENGTH, base32_string);
 
     // Now split the base32 string into our chunks
@@ -229,7 +227,7 @@ dissect_node_id(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_item 
 }
 
 static gint
-dissect_address(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, proto_item *header, const guint start_offset)
+dissect_address(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_item *header, const guint start_offset)
 {
     guint varint_length;
     guint64 field_length;
@@ -267,7 +265,7 @@ dissect_address(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, proto_i
 }
 
 static gint
-dissect_instance_id(tvbuff_t *tvb, packet_info *pinfo _U_, proto_tree *tree, proto_item *header, guint offset)
+dissect_instance_id(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_item *header, guint offset)
 {
     gint varint_length;
     gint64 instance_id;
@@ -375,7 +373,11 @@ dissect_protobuf_field(
     }
 
     // No handler defined for this tag
-    // TODO: Add expert info
+    expert_add_info_format(
+        pinfo, header, &ei_syncthing_local_malformed,
+        "Unknown tag: %li",
+        tag
+    );
     return -1;
 }
 
@@ -391,7 +393,6 @@ dissect_next_field(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_it
     * }
     */
 
-    // TODO: This should be initialized only once, maybe in the proto_register_syncthing?
     syncthing_protobuf_field_definition field_definitions[] = {
         /* { tag, wire_type, handler, ett } */
         { 1, 2, &dissect_node_id, ett_syncthing_local_node_id },
@@ -422,7 +423,7 @@ dissect_syncthing_local_discovery(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
                 pinfo,
                 ti,
                 &ei_syncthing_local_malformed,
-                "Magic number is incorrect"
+                "Probably not a syncthing packet: magic number should be 0x2EA7D90B"
             );
 
             return tvb_captured_length(tvb);
