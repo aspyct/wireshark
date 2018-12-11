@@ -9,12 +9,16 @@
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
 
-// TODO: Should I do something about libwsutil0.symbols?
+// Question: Should I do something about libwsutil0.symbols?
 // It contains a reference to the base32 method I moved
 // I could also add references to the new base32 encode method.
 
 // TODO: Test the fc00 dissector if possible. The change was small, but eh...
 // There should be a pcap file in the bug that added support
+
+// TODO: Test various expert info cases
+
+// TODO: Run another pass of fuzz testing when all else is done
 
 #include "config.h"
 
@@ -37,34 +41,54 @@
 
 typedef gint (*syncthing_protobuf_field_handler)(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_item *header, guint offset);
 
+/*
+ * Define a protobuf field and how to parse it
+ */
 typedef const struct {
     guint64 tag;
     guint8 wire_type;
     syncthing_protobuf_field_handler handler;
     int ett;
+    int hf;
 } syncthing_protobuf_field_definition;
 
 
-/* Protocols */
-/* Yeah ok, there's only one right now, but syncthing has 4 of them, so maybe later */
+/*
+ * Protocols
+ *
+ * There's only one right now, but syncthing has 4.
+ * Let's keep some room for that.
+ */
 void proto_register_syncthing(void);
+
 static int proto_syncthing_local_discovery = -1;
 
 
-/* Fields */
-// TODO: For the sake of consistency, should I use gint everywhere?
-static int hf_syncthing_protobuf_entry = -1;
+/*
+ * Fields
+ */
+// Question: For the sake of consistency, should I use gint everywhere?
 static int hf_syncthing_protobuf_key = -1;
 static int hf_syncthing_protobuf_tag = -1;
 static int hf_syncthing_protobuf_wire_type = -1;
-static int hf_syncthing_protobuf_field_length = -1;
+
 static int hf_syncthing_local_magic = -1;
+
 static int hf_syncthing_local_node_id = -1;
+static int hf_syncthing_local_node_id_length = -1;
+static int hf_syncthing_local_node_id_value = -1;
+
 static int hf_syncthing_local_address = -1;
+static int hf_syncthing_local_address_length = -1;
+static int hf_syncthing_local_address_value = -1;
+
 static int hf_syncthing_local_instance_id = -1;
+static int hf_syncthing_local_instance_id_value = -1;
 
 
-/* Trees */
+/*
+ * Trees
+ */
 static gint ett_syncthing_local = -1;
 static gint ett_syncthing_local_node_id = -1;
 static gint ett_syncthing_local_address = -1;
@@ -72,7 +96,9 @@ static gint ett_syncthing_local_instance_id = -1;
 static gint ett_syncthing_protobuf_key = -1;
 
 
-/* Expert infos */
+/*
+ * Expert infos
+ */
 static expert_field ei_syncthing_local_malformed = EI_INIT;
 
 
@@ -190,13 +216,17 @@ dissect_node_id(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_item 
 
         proto_tree_add_uint64(
             tree,
-            hf_syncthing_protobuf_field_length,
+            hf_syncthing_local_node_id_length,
             tvb,
             start_offset,
             varint_length,
             field_length
         );
 
+        // It's not recommended to use tvb_get_ptr, but in this case
+        // I need the bytes to convert them to the string node ID
+        // I would love to get rid of this unsafe pointer though.
+        // Question: any suggestion?
         const guint8 *node_id_bytes = tvb_get_ptr(tvb, offset, buflen);
 
         // A node ID is split into 4 groups of 13+1 chars
@@ -209,8 +239,7 @@ dissect_node_id(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_item 
         guint8 node_id_string[NODE_ID_STRING_LENGTH + 1];
 
         if (stringify_node_id(node_id_bytes, node_id_string) != -1) {
-            // TODO: There was a remark on this from Peter. Fix it.
-            proto_tree_add_bytes(tree, hf_syncthing_local_node_id, tvb, offset, buflen, node_id_bytes);
+            proto_tree_add_bytes(tree, hf_syncthing_local_node_id_value, tvb, offset, buflen, node_id_bytes);
             proto_item_set_text(header, "Node ID: %s", node_id_string);
 
             return varint_length + buflen;
@@ -242,7 +271,7 @@ dissect_address(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_item 
 
         proto_tree_add_uint64(
             tree,
-            hf_syncthing_protobuf_field_length,
+            hf_syncthing_local_address_length,
             tvb,
             start_offset,
             varint_length,
@@ -251,10 +280,12 @@ dissect_address(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_item 
 
         guint8 *buf = (guint8*) wmem_alloc(wmem_packet_scope(), buflen + 1);
         tvb_get_nstringz0(tvb, offset, buflen + 1, buf);
-        proto_tree_add_string(tree, hf_syncthing_local_address, tvb, offset, buflen, buf);
+        proto_tree_add_string(tree, hf_syncthing_local_address_value, tvb, offset, buflen, buf);
 
-        // TODO: Can I reuse the labels I put in the hf fields?
-        proto_item_set_text(header, "Sync address: %s", buf);
+        // Question: I tried using append_text instead of set_text,
+        // but then I end up with a [Emtpy] because of the leng
+        proto_item_append_text(header, "%s", buf);
+        //proto_item_set_text(header, "Sync address: %s", buf);
 
         return varint_length + buflen;
     }
@@ -273,7 +304,7 @@ dissect_instance_id(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_i
     varint_length = tvb_get_varint(tvb, offset, MAX_VARINT_LENGTH, &instance_id, ENC_VARINT_PROTOBUF);
     if (varint_length != 0)
     {
-        proto_tree_add_int64(tree, hf_syncthing_local_instance_id, tvb, offset, varint_length, instance_id);
+        proto_tree_add_int64(tree, hf_syncthing_local_instance_id_value, tvb, offset, varint_length, instance_id);
         proto_item_set_text(header, "Instance ID: %" G_GINT64_MODIFIER "i", instance_id);
         return varint_length;
     }
@@ -286,7 +317,6 @@ dissect_instance_id(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_i
 
 static gint
 dissect_protobuf_field(
-    // TODO: Can I make this const? And in other functions?
     tvbuff_t *tvb,
     packet_info *pinfo,
     proto_tree *tree,
@@ -328,14 +358,16 @@ dissect_protobuf_field(
             return -1;
         }
 
-        // TODO: This results in a weird filter
+        // Question: This results in a weird filter
         // syncthing.protobuf.entry == "[Empty]"
         // Can we fix this once we have the length?
         proto_item *field_header = proto_tree_add_item(
             tree,
-            hf_syncthing_protobuf_entry,
+            def->hf,
             tvb,
             start_offset,
+            // Question: I tried the next param as -1 as indicated in the doc
+            // But then the packet is reported as malformed. Why?
             0, // we'll know it after parsing the field
             ENC_NA
         );
@@ -395,9 +427,9 @@ dissect_next_field(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_it
 
     syncthing_protobuf_field_definition field_definitions[] = {
         /* { tag, wire_type, handler, ett } */
-        { 1, 2, &dissect_node_id, ett_syncthing_local_node_id },
-        { 2, 2, &dissect_address, ett_syncthing_local_address },
-        { 3, 0, &dissect_instance_id, ett_syncthing_local_instance_id }
+        { 1, 2, &dissect_node_id, ett_syncthing_local_node_id, hf_syncthing_local_node_id },
+        { 2, 2, &dissect_address, ett_syncthing_local_address, hf_syncthing_local_address },
+        { 3, 0, &dissect_instance_id, ett_syncthing_local_instance_id, hf_syncthing_local_instance_id }
     };
 
     return dissect_protobuf_field(tvb, pinfo, tree, header, offset, field_definitions, array_length(field_definitions));
@@ -458,12 +490,9 @@ void
 proto_register_syncthing(void)
 {
     static hf_register_info hf[] = {
-        { &hf_syncthing_protobuf_entry,
-            { "Protobuf entry", "syncthing.protobuf.entry",
-            FT_STRINGZ, BASE_NONE,
-            NULL, 0x0,
-            NULL, HFILL }
-        },
+        /*
+         * Generic protobuf fields
+         */
         { &hf_syncthing_protobuf_key,
             { "Protobuf key", "syncthing.protobuf.key",
             FT_UINT64, BASE_HEX,
@@ -471,7 +500,7 @@ proto_register_syncthing(void)
             NULL, HFILL }
         },
         { &hf_syncthing_protobuf_tag,
-            { "ID", "syncthing.protobuf.tag",
+            { "ID", "syncthing.protobuf.tag", // TODO: Fix ID/tag inconsistency.
             FT_UINT64, BASE_DEC,
             NULL, 0x0,
             NULL, HFILL }
@@ -482,32 +511,72 @@ proto_register_syncthing(void)
             NULL, 0x0,
             NULL, HFILL }
         },
-        { &hf_syncthing_protobuf_field_length,
-            { "Field length", "syncthing.protobuf.length",
-            FT_UINT64, BASE_DEC,
-            NULL, 0x0,
-            NULL, HFILL }
-        },
+
+        /*
+         * Magic number field
+         */
         { &hf_syncthing_local_magic,
             { "Magic (constant)", "syncthing.local.magic",
             FT_UINT32, BASE_HEX,
             NULL, 0x0,
             NULL, HFILL }
         },
+
+        /*
+         * Node ID field
+         */
         { &hf_syncthing_local_node_id,
             { "Node ID", "syncthing.local.node_id",
+            FT_STRINGZ, BASE_NONE,
+            NULL, 0x0,
+            NULL, HFILL}
+        },
+        { &hf_syncthing_local_node_id_length,
+            { "Length", "syncthing.local.node_id.length",
+            FT_UINT64, BASE_DEC,
+            NULL, 0x0,
+            NULL, HFILL}
+        },
+        { &hf_syncthing_local_node_id_value,
+            { "Value", "syncthing.local.node_id.value",
             FT_BYTES, BASE_NONE,
             NULL, 0x0,
             NULL, HFILL}
         },
+
+        /*
+         * Address field
+         */
         { &hf_syncthing_local_address,
             { "Sync address", "syncthing.local.address",
             FT_STRING, BASE_NONE,
             NULL, 0x0,
             NULL, HFILL }
         },
+        { &hf_syncthing_local_address_length,
+            { "Length", "syncthing.local.address.length",
+            FT_UINT64, BASE_DEC,
+            NULL, 0x0,
+            NULL, HFILL }
+        },
+        { &hf_syncthing_local_address_value,
+            { "Value", "syncthing.local.address.value",
+            FT_STRING, BASE_NONE,
+            NULL, 0x0,
+            NULL, HFILL }
+        },
+
+        /*
+         * Instance ID field
+         */
         { &hf_syncthing_local_instance_id,
             { "Instance ID", "syncthing.local.instance_id",
+            FT_INT64, BASE_DEC,
+            NULL, 0x0,
+            NULL, HFILL }
+        },
+        { &hf_syncthing_local_instance_id_value,
+            { "Value", "syncthing.local.instance_id.value",
             FT_INT64, BASE_DEC,
             NULL, 0x0,
             NULL, HFILL }
