@@ -354,7 +354,7 @@ dissect_protobuf_field(
     gint varint_length;
     guint64 key;
     guint offset = start_offset;
-	
+
     varint_length = tvb_get_varint(tvb, offset, 4, &key, ENC_VARINT_PROTOBUF);
 
     if (varint_length == 0) {
@@ -471,7 +471,7 @@ dissect_syncthing_local_discovery(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
     // The first four bytes are 0x2EA7D90B in network (big endian) byte order.
     if (tvb_bytes_exist(tvb, 0, 4)) {
         guint32 magic = tvb_get_ntohl(tvb, 0);
-    
+
         if (magic != 0x2EA7D90B) {
             // This is not a valid syncthing packet
             expert_add_info_format(
