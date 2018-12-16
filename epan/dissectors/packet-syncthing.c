@@ -124,7 +124,8 @@ generate_nonstandard_luhn_checksum_char(const char *str, gint length, char *outp
             return -1;
         }
 
-        int codepoint = position - alphabet;
+        // The position is garanteed to be at most 33, so the cast is safe
+        int codepoint = (int)(position - alphabet);
 
         gint addend = factor * codepoint;
         addend = (addend / alphabet_length) + (addend % alphabet_length);
@@ -378,7 +379,7 @@ dissect_protobuf_field(
             // Unexpected wire type, packet is invalid
             expert_add_info_format(
                 pinfo, header, &ei_syncthing_local_malformed,
-                "Unexpected wire type for field tag %li. Got %i, expected %i",
+                "Unexpected wire type for field tag %" G_GINT64_MODIFIER "i. Got %i, expected %i",
                 tag, wire_type, def->wire_type);
             return -1;
         }
@@ -430,7 +431,7 @@ dissect_protobuf_field(
     // No handler defined for this tag
     expert_add_info_format(
         pinfo, header, &ei_syncthing_local_malformed,
-        "Unknown tag: %li",
+        "Unknown tag: %" G_GINT64_MODIFIER "i",
         tag
     );
     return -1;
