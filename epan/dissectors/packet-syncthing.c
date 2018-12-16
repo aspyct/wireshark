@@ -13,11 +13,6 @@
 // It contains a reference to the base32 method I moved
 // I could also add references to the new base32 encode method.
 
-// TODO: Test the fc00 dissector if possible. The change was small, but eh...
-// There should be a pcap file in the bug that added support
-
-// TODO: Test various expert info cases
-
 // TODO: Run another pass of fuzz testing when all else is done
 
 #include "config.h"
@@ -32,7 +27,7 @@
 #define SYNCTHING_LOCAL_DISCOVERY_PORT 21027
 #define MAX_VARINT_LENGTH 10
 #define NODE_ID_BYTE_LENGTH 32
-#define NODE_ID_STRING_LENGTH 63
+#define NODE_ID_STRING_LENGTH 64 // Including the \0
 
 #define CONSTRAIN_TO_GINT_OR_FAIL(constrained, minus) \
     if ((constrained) > G_MAXINT - (minus)) { \
@@ -51,7 +46,6 @@ typedef const struct {
     int ett;
     int hf;
 } syncthing_protobuf_field_definition;
-
 
 /*
  * Protocols
@@ -147,8 +141,22 @@ generate_nonstandard_luhn_checksum_char(const char *str, gint length, char *outp
 }
 
 static gint
-stringify_node_id(const guint8 *node_id_bytes, guint8 *node_id_string)
+stringify_node_id(
+    const guint8 *node_id_bytes, guint bytes_length,
+    guint8 *node_id_string, guint string_length)
 {
+    // These two tests are redundant,
+    // but it might come in handy when we refactor the code.
+    if (bytes_length != NODE_ID_BYTE_LENGTH) {
+        // Must be exactly this size
+        return -1;
+    }
+
+    if (string_length != NODE_ID_STRING_LENGTH) {
+        // Must be exactly this size, too
+        return -1;
+    }
+
     size_t base32_length = ws_base32_encode_length(NODE_ID_BYTE_LENGTH);
 
     guint8 *base32_string = (guint8 *) wmem_alloc(wmem_packet_scope(), base32_length + 1);
@@ -159,19 +167,25 @@ stringify_node_id(const guint8 *node_id_bytes, guint8 *node_id_string)
     ws_base32_encode(node_id_bytes, NODE_ID_BYTE_LENGTH, base32_string);
 
     // Now split the base32 string into our chunks
-    for (int i = 0; i < 4; ++i)
+    for (guint i = 0; i < 4; ++i)
     {
         // Base32 -> SIDRUKEDIRUMIDEKILUIJITEPL7657PSETURITEKPS...
         // Result -> SIDRUKE-DIRUMI.-DEKILUI-JITEPL.-7657PSE-TURITE.-KPS...
         // where . is a luhn check char
-        int group_offset = i * 16;
-        int dash1_offset = group_offset + 7;
-        int part2_offset = dash1_offset + 1;
-        int luhn_offset = part2_offset + 6;
-        int dash2_offset = luhn_offset + 1;
+        guint group_offset = i * 16;
+        guint dash1_offset = group_offset + 7;
+        guint part2_offset = dash1_offset + 1;
+        guint luhn_offset = part2_offset + 6;
+        guint dash2_offset = luhn_offset + 1;
 
-        int group_offset_in_base32 = i * 13;
-        int part2_offset_in_base32 = group_offset_in_base32 + 7;
+        // Make sure we're not overstepping the boundaries
+        if (dash2_offset >= string_length) {
+            // Too far, let's not break stuff
+            return -1;
+        }
+
+        guint group_offset_in_base32 = i * 13;
+        guint part2_offset_in_base32 = group_offset_in_base32 + 7;
 
         memcpy(node_id_string + group_offset, base32_string + group_offset_in_base32, 7);
         node_id_string[dash1_offset] = '-';
@@ -184,7 +198,7 @@ stringify_node_id(const guint8 *node_id_bytes, guint8 *node_id_string)
         node_id_string[dash2_offset] = '-';
     }
 
-    node_id_string[NODE_ID_STRING_LENGTH] = '\0';
+    node_id_string[NODE_ID_STRING_LENGTH - 1] = '\0';
 
     return 0;
 }
@@ -223,10 +237,10 @@ dissect_node_id(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_item 
             field_length
         );
 
-        // It's not recommended to use tvb_get_ptr, but in this case
+        // Question: It's not recommended to use tvb_get_ptr, but in this case
         // I need the bytes to convert them to the string node ID
         // I would love to get rid of this unsafe pointer though.
-        // Question: any suggestion?
+        // Any suggestion?
         const guint8 *node_id_bytes = tvb_get_ptr(tvb, offset, buflen);
 
         // A node ID is split into 4 groups of 13+1 chars
@@ -236,10 +250,19 @@ dissect_node_id(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_item 
         // The resulting string looks like this:
         // 76SSOKL-4IDHXB7-KP6R3N5-IYVDIWL-SO5JUM7-ZI67AV2-E5576TD-ICSMNQV
         // A total of 63 chars. With the \0, we need 64 chars.
-        guint8 node_id_string[NODE_ID_STRING_LENGTH + 1];
+        guint8 node_id_string[NODE_ID_STRING_LENGTH];
 
-        if (stringify_node_id(node_id_bytes, node_id_string) != -1) {
-            proto_tree_add_bytes(tree, hf_syncthing_local_node_id_value, tvb, offset, buflen, node_id_bytes);
+        if (stringify_node_id(node_id_bytes, buflen, node_id_string, NODE_ID_STRING_LENGTH) != -1) {
+            proto_tree_add_bytes_format(
+                tree,
+                hf_syncthing_local_node_id_value,
+                tvb,
+                offset,
+                buflen,
+                node_id_bytes,
+                "Value: %s",
+                node_id_string
+            );
             proto_item_set_text(header, "Node ID: %s", node_id_string);
 
             return varint_length + buflen;
@@ -283,9 +306,11 @@ dissect_address(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_item 
         proto_tree_add_string(tree, hf_syncthing_local_address_value, tvb, offset, buflen, buf);
 
         // Question: I tried using append_text instead of set_text,
-        // but then I end up with a [Emtpy] because of the leng
-        proto_item_append_text(header, "%s", buf);
-        //proto_item_set_text(header, "Sync address: %s", buf);
+        // but then I end up with a "Sync address: <Missing>" followed by my text.
+        // The "<Missing>" seems to be there because of the length == -1
+        // So i defaulted back to set_text.
+        // Any suggestion?
+        proto_item_set_text(header, "Sync address: %s", buf);
 
         return varint_length + buflen;
     }
@@ -358,17 +383,16 @@ dissect_protobuf_field(
             return -1;
         }
 
-        // Question: This results in a weird filter
-        // syncthing.protobuf.entry == "[Empty]"
-        // Can we fix this once we have the length?
+        // Question: This results in a broken filter
+        // To test this, right click on a top-level Node Id column (or address or instance Id),
+        // and apply as filter. No packet will be displayed.
+        // How can I fix this?
         proto_item *field_header = proto_tree_add_item(
             tree,
             def->hf,
             tvb,
             start_offset,
-            // Question: I tried the next param as -1 as indicated in the doc
-            // But then the packet is reported as malformed. Why?
-            0, // we'll know it after parsing the field
+            -1, // we'll know the length after parsing the field
             ENC_NA
         );
         proto_tree *subtree = proto_item_add_subtree(field_header, def->ett);
@@ -385,7 +409,6 @@ dissect_protobuf_field(
         );
         proto_item *key_tree = proto_item_add_subtree(key_item, ett_syncthing_protobuf_key);
 
-        // TODO: These two should be bit fields instead
         proto_tree_add_uint64(key_tree, hf_syncthing_protobuf_tag, tvb, start_offset, varint_length, tag);
         proto_tree_add_uint(key_tree, hf_syncthing_protobuf_wire_type, tvb, start_offset, varint_length, wire_type);
 
@@ -426,7 +449,7 @@ dissect_next_field(tvbuff_t *tvb, packet_info *pinfo, proto_tree *tree, proto_it
     */
 
     syncthing_protobuf_field_definition field_definitions[] = {
-        /* { tag, wire_type, handler, ett } */
+        /* { tag, wire_type, handler, ett, hf } */
         { 1, 2, &dissect_node_id, ett_syncthing_local_node_id, hf_syncthing_local_node_id },
         { 2, 2, &dissect_address, ett_syncthing_local_address, hf_syncthing_local_address },
         { 3, 0, &dissect_instance_id, ett_syncthing_local_instance_id, hf_syncthing_local_instance_id }
@@ -450,7 +473,6 @@ dissect_syncthing_local_discovery(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
     
         if (magic != 0x2EA7D90B) {
             // This is not a valid syncthing packet
-            // TODO: Test this
             expert_add_info_format(
                 pinfo,
                 ti,
@@ -474,7 +496,6 @@ dissect_syncthing_local_discovery(tvbuff_t *tvb, packet_info *pinfo, proto_tree 
             }
             else {
                 // The field could not be parsed
-                // TODO: Test this
                 expert_add_info_format(pinfo, ti, &ei_syncthing_local_malformed, "Could not parse field");
                 return tvb_captured_length(tvb);
             }
@@ -527,7 +548,7 @@ proto_register_syncthing(void)
          */
         { &hf_syncthing_local_node_id,
             { "Node ID", "syncthing.local.node_id",
-            FT_STRINGZ, BASE_NONE,
+            FT_BYTES, BASE_NONE,
             NULL, 0x0,
             NULL, HFILL}
         },
@@ -549,7 +570,7 @@ proto_register_syncthing(void)
          */
         { &hf_syncthing_local_address,
             { "Sync address", "syncthing.local.address",
-            FT_STRING, BASE_NONE,
+            FT_BYTES, BASE_NONE,
             NULL, 0x0,
             NULL, HFILL }
         },
@@ -571,7 +592,7 @@ proto_register_syncthing(void)
          */
         { &hf_syncthing_local_instance_id,
             { "Instance ID", "syncthing.local.instance_id",
-            FT_INT64, BASE_DEC,
+            FT_BYTES, BASE_NONE,
             NULL, 0x0,
             NULL, HFILL }
         },
