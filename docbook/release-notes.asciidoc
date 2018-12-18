@@ -124,6 +124,7 @@ S101 Lawo Emberplus transport frame
 Secure Reliable Transport Protocol (SRT)
 Spirent Test Center Signature decoding for Ethernet and FibreChannel (STCSIG, disabled by default)
 Sybase-specific portions of TDS
+Syncthing Local Discovery protocol v4
 systemd Journal Export
 TeamSpeak 3 DNS
 TPM 2.0

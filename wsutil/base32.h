@@ -7,6 +7,41 @@
  *
  * SPDX-License-Identifier: GPL-2.0-or-later
  */
+
+/**
+ * base32 (de)coder implementation as specified by RFC4648.
+ *
+ * Copyright (c) 2010 Adrien Kunysz
+ *
+ * Permission is hereby granted, free of charge, to any person obtaining a copy
+ * of this software and associated documentation files (the "Software"), to deal
+ * in the Software without restriction, including without limitation the rights
+ * to use, copy, modify, merge, publish, distribute, sublicense, and/or sell
+ * copies of the Software, and to permit persons to whom the Software is
+ * furnished to do so, subject to the following conditions:
+ *
+ * The above copyright notice and this permission notice shall be included in
+ * all copies or substantial portions of the Software.
+ *
+ * THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+ * IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+ * FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+ * AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER
+ * LIABILITY, WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM,
+ * OUT OF OR IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN
+ * THE SOFTWARE.
+ **/
+
+/**
+ * Further modifications made to the original base32 encoder:
+ *
+ * - The decode functions have been removed because they are not used in wireshark
+ * - The encode functions have been renamed to match wireshark conventions
+ * - There was a size_t to int conversion error reported by clang in ws_base32_encode
+ *       I chose to use int instead of size_t in the signature, since it seems safer
+ *       to restrict to the smaller size used in underlying functions.
+ **/
+
 #ifndef __BASE32_H__
 #define __BASE32_H__
 
@@ -16,15 +51,26 @@
 extern "C" {
 #endif /* __cplusplus */
 
-/** Returned by base32_decode() if the input is not valid base32. */
-#define Base32_BAD_INPUT -1
-/** Returned by base32_decode() if the output buffer is too small. */
-#define Base32_TOO_BIG -2
+#include <stddef.h>   // size_t
 
-/* Encoding of a base32 byte array */
+/**
+ * Returns the length of the output buffer required to encode len bytes of
+ * data into base32. This is a macro to allow users to define buffer size at
+ * compilation time.
+ */
 WS_DLL_PUBLIC
-int ws_base32_decode(guint8* output, const guint32 outputLength,
-						const guint8* in, const guint32 inputLength);
+int ws_base32_encode_length(int plain_length);
+
+/**
+ * Encode the data pointed to by plain into base32 and store the
+ * result at the address pointed to by coded. The "coded" argument
+ * must point to a location that has enough available space
+ * to store the whole coded string. The resulting string will only
+ * contain characters from the [A-Z2-7=] set. The "len" arguments
+ * define how many bytes will be read from the "plain" buffer.
+ **/
+WS_DLL_PUBLIC
+void ws_base32_encode(const unsigned char *plain, int len, unsigned char *coded);
 
 #ifdef __cplusplus
 }
