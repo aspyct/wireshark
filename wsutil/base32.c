@@ -59,8 +59,8 @@
  * systems that don't have exactly 8 bits per (unsigned) char.
  **/
 
-static size_t
-min(size_t x, size_t y)
+static int
+min(int x, int y)
 {
 	return x < y ? x : y;
 }
