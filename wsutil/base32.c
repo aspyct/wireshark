@@ -32,6 +32,11 @@
  * THE SOFTWARE.
  **/
 
+/**
+ * Further modifications made to the original base32 encoder.
+ * See header file for details.
+ **/
+
 #include <assert.h>  // assert()
 #include <limits.h>  // CHAR_BIT
 

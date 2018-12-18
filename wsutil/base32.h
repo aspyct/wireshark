@@ -32,6 +32,16 @@
  * THE SOFTWARE.
  **/
 
+/**
+ * Further modifications made to the original base32 encoder:
+ *
+ * - The decode functions have been removed because they are not used in wireshark
+ * - The encode functions have been renamed to match wireshark conventions
+ * - There was a size_t to int conversion error reported by clang in ws_base32_encode
+ *       I chose to use int instead of size_t in the signature, since it seems safer
+ *       to restrict to the smaller size used in underlying functions.
+ **/
+
 #ifndef __BASE32_H__
 #define __BASE32_H__
 
