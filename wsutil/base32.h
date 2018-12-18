@@ -49,7 +49,7 @@ extern "C" {
  * compilation time.
  */
 WS_DLL_PUBLIC
-size_t ws_base32_encode_length(size_t plain_length);
+int ws_base32_encode_length(int plain_length);
 
 /**
  * Encode the data pointed to by plain into base32 and store the
@@ -60,7 +60,7 @@ size_t ws_base32_encode_length(size_t plain_length);
  * define how many bytes will be read from the "plain" buffer.
  **/
 WS_DLL_PUBLIC
-void ws_base32_encode(const unsigned char *plain, size_t len, unsigned char *coded);
+void ws_base32_encode(const unsigned char *plain, int len, unsigned char *coded);
 
 #ifdef __cplusplus
 }
